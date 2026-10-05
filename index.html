@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#efeae2" />
+    <title>Grid to Vid</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c1917'/%3E%3Crect x='5' y='5' width='9' height='9' rx='1.5' fill='%23ffb703'/%3E%3Crect x='18' y='5' width='9' height='9' rx='1.5' fill='%2334d399'/%3E%3Crect x='5' y='18' width='9' height='9' rx='1.5' fill='%23f9a8d4'/%3E%3Crect x='18' y='18' width='9' height='9' rx='1.5' fill='%2393c5fd'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="mast">
+        <h1>Grid to Vid</h1>
+        <p>Make one video out of your GIFs and clips.</p>
+      </header>
+
+      <section id="empty" class="empty">
+        <button type="button" class="drop" id="drop-target">
+          <span class="drop-icon" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </span>
+          <span class="drop-title">Drop GIFs or videos here</span>
+          <span class="drop-or">or</span>
+          <span class="drop-cta">Choose GIFs or videos</span>
+        </button>
+        <p class="lede">They play together in a grid. Then you download a video or a GIF.</p>
+        <button type="button" class="text-btn" id="demo">Try a demo</button>
+        <p id="empty-status" class="status" role="status"></p>
+      </section>
+
+      <section id="workspace" class="workspace" hidden>
+        <div id="stage" class="stage">
+          <div id="grid" class="grid"></div>
+        </div>
+        <p id="frame-readout" class="frame-readout">Video 1920×1080 · 16:9. GIF 640×360.</p>
+        <p id="hint" class="hint"></p>
+        <div class="grid-size">
+          <div class="stepper">
+            <span>Columns</span>
+            <button type="button" id="cols-minus" aria-label="Fewer columns">−</button>
+            <strong id="cols-value">1</strong>
+            <button type="button" id="cols-plus" aria-label="More columns">+</button>
+          </div>
+          <div class="stepper">
+            <span>Rows</span>
+            <button type="button" id="rows-minus" aria-label="Fewer rows">−</button>
+            <strong id="rows-value">1</strong>
+            <button type="button" id="rows-plus" aria-label="More rows">+</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="secondary" id="add">Add more</button>
+          <div class="primary-wrap">
+            <button type="button" class="primary" id="download">Download video</button>
+            <button type="button" class="secondary" id="download-gif">Download GIF</button>
+            <button type="button" class="text-btn" id="download-instead" hidden>Download instead</button>
+          </div>
+        </div>
+        <p id="status" class="status" role="status"></p>
+        <p class="quiet">
+          The video is a few seconds long. Messages and Instagram will loop it. If it plays only once, turn on loop in your video app.
+        </p>
+        <button type="button" class="text-btn adjust-toggle" id="adjust-toggle" aria-expanded="false" aria-controls="adjust">
+          Adjust look
+        </button>
+        <div id="adjust" class="adjust" hidden>
+          <fieldset>
+            <legend>Shape</legend>
+            <div class="choices">
+              <button type="button" class="choice" data-shape="square" aria-pressed="false">
+                <span class="mini square" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                Square <span class="ratio">1:1</span>
+              </button>
+              <button type="button" class="choice" data-shape="wide" aria-pressed="true">
+                <span class="mini wide" aria-hidden="true"><i></i><i></i><i></i></span>
+                Wide <span class="ratio">16:9</span>
+              </button>
+              <button type="button" class="choice" data-shape="tall" aria-pressed="false">
+                <span class="mini tall" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                Tall <span class="ratio">9:16</span>
+              </button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Length</legend>
+            <p class="field-note">How long the download plays.</p>
+            <div class="choices">
+              <button type="button" class="choice" data-length="auto" aria-pressed="true">Auto</button>
+              <button type="button" class="choice" data-length="3" aria-pressed="false">3 seconds</button>
+              <button type="button" class="choice" data-length="5" aria-pressed="false">5 seconds</button>
+              <button type="button" class="choice" data-length="10" aria-pressed="false">10 seconds</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Clip time</legend>
+            <p class="field-note">How much of each clip to use.</p>
+            <div class="choices">
+              <button type="button" class="choice" data-clip="3" aria-pressed="false">3 seconds</button>
+              <button type="button" class="choice" data-clip="5" aria-pressed="false">5 seconds</button>
+              <button type="button" class="choice" data-clip="10" aria-pressed="true">10 seconds</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Fit</legend>
+            <div class="choices">
+              <button type="button" class="choice" data-fit="contain" aria-pressed="true">Show the whole clip</button>
+              <button type="button" class="choice" data-fit="cover" aria-pressed="false">Fill the square</button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Size</legend>
+            <p class="field-note">The exact size of the video. The GIF uses the same shape.</p>
+            <div class="choices">
+              <button type="button" class="choice size" data-frame="1920x1080" aria-pressed="true">1920×1080 <span class="ratio">16:9</span></button>
+              <button type="button" class="choice size" data-frame="1280x720" aria-pressed="false">1280×720 <span class="ratio">16:9</span></button>
+              <button type="button" class="choice size" data-frame="1080x1080" aria-pressed="false">1080×1080 <span class="ratio">1:1</span></button>
+              <button type="button" class="choice size" data-frame="1080x1350" aria-pressed="false">1080×1350 <span class="ratio">4:5</span></button>
+              <button type="button" class="choice size" data-frame="1080x1920" aria-pressed="false">1080×1920 <span class="ratio">9:16</span></button>
+              <button type="button" class="choice size" data-frame="720x1280" aria-pressed="false">720×1280 <span class="ratio">9:16</span></button>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Background</legend>
+            <div class="swatches">
+              <button type="button" class="swatch" data-color="#000000" aria-label="Black" aria-pressed="true"></button>
+              <button type="button" class="swatch" data-color="#ffffff" aria-label="White" aria-pressed="false"></button>
+              <label class="more-color">
+                More colors
+                <input id="color" type="color" value="#000000" />
+              </label>
+            </div>
+          </fieldset>
+        </div>
+      </section>
+
+      <footer>
+        <p>Your GIFs and videos stay on this device. Refreshing the page clears the grid.</p>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast" hidden>
+      <span>Removed</span>
+      <button type="button" id="undo">Undo</button>
+    </div>
+
+    <input
+      id="file"
+      type="file"
+      hidden
+      multiple
+      accept="image/gif,video/mp4,video/quicktime,video/webm,.gif,.mp4,.mov,.m4v,.webm"
+    />
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
