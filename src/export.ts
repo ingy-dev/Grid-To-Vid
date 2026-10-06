@@ -15,8 +15,8 @@ import {
   type VideoSample,
 } from 'mediabunny'
 import { GIFEncoder, applyPalette, quantize } from 'gifenc'
-import { clipFrameCount, exportFrameCount, FPS, frameById, outputLayout, placedRect, usedSeconds } from './layout'
-import type { Clip, Fit, FrameId, GifClip, VideoClip } from './types'
+import { clipFrameCount, exportFrameCount, FPS, outputLayout, placedRect, usedSeconds } from './layout'
+import type { Clip, Fit, FrameFit, FrameId, GifClip, VideoClip } from './types'
 
 const ENCODE_ERROR = 'Couldn’t make the video in this browser. Open this page in Chrome and try again.'
 const GIF_ERROR = 'Couldn’t make the GIF. Try again.'
@@ -121,13 +121,14 @@ export async function exportGrid(options: {
   fit: Fit
   background: string
   frame: FrameId
+  frameFit: FrameFit
   sound: VideoClip | null
   clipSeconds: number
   lengthSeconds: number | null
   onProgress: (done: number, total: number) => void
 }): Promise<{ blob: Blob; soundFailed: boolean }> {
-  const { clips, cols, rows, fit, background, frame, sound, clipSeconds, lengthSeconds, onProgress } = options
-  const layout = outputLayout(cols, rows, frameById(frame))
+  const { clips, cols, rows, fit, background, frame, frameFit, sound, clipSeconds, lengthSeconds, onProgress } = options
+  const layout = outputLayout(cols, rows, frame, frameFit)
   const { cell, width, height, offsetX, offsetY } = layout
   const frameCount = exportFrameCount(
     clips.map((clip) => usedSeconds(clip.duration, clipSeconds)),
@@ -228,12 +229,13 @@ export async function exportGif(options: {
   fit: Fit
   background: string
   frame: FrameId
+  frameFit: FrameFit
   clipSeconds: number
   lengthSeconds: number | null
   onProgress: (done: number, total: number) => void
 }): Promise<Blob> {
-  const { clips, cols, rows, fit, background, frame, clipSeconds, lengthSeconds, onProgress } = options
-  const layout = outputLayout(cols, rows, frameById(frame))
+  const { clips, cols, rows, fit, background, frame, frameFit, clipSeconds, lengthSeconds, onProgress } = options
+  const layout = outputLayout(cols, rows, frame, frameFit)
   const colors = layout.gifColors
   const cell = layout.gifCell
   const width = layout.gifWidth

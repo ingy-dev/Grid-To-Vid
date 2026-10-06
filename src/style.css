@@ -153,13 +153,36 @@ body.is-dragover .stage {
 .grid {
   display: grid;
   background: transparent;
+  flex-shrink: 0;
 }
 
-.frame-readout {
-  margin: 10px 0 0;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
+.size-field {
+  max-width: 520px;
+  margin: 18px auto 0;
 }
+
+.size-field label {
+  display: block;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.size-field select {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 14px;
+  background: var(--card);
+  font: inherit;
+}
+
+.size-field .field-note { margin: 8px 0 0; }
+.size-field .choices { margin-top: 10px; }
+#frame-fit { margin-top: 4px; }
 
 .cell {
   position: relative;
@@ -258,7 +281,7 @@ body.is-rearranging {
   margin: 14px 0 0;
 }
 
-.hint { color: var(--muted); }
+.hint { color: var(--muted); margin-top: 8px; }
 
 .grid-size {
   display: flex;

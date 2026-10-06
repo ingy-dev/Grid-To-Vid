@@ -1,7 +1,7 @@
 import { kindOf } from './files'
-import { frameById, gifSize, gridShape, usedSeconds } from './layout'
+import { frameById, gridShape, outputLayout, usedSeconds } from './layout'
 import { disposeClip } from './state'
-import type { Clip, Fit, FrameId, ShapePref, VideoClip } from './types'
+import type { Clip, Fit, FrameFit, FrameId, ShapePref, VideoClip } from './types'
 import { MAX_BYTES, MAX_CLIPS } from './types'
 
 const empty = document.querySelector<HTMLElement>('#empty')!
@@ -10,7 +10,10 @@ const dropTarget = document.querySelector<HTMLButtonElement>('#drop-target')!
 const demoButton = document.querySelector<HTMLButtonElement>('#demo')!
 const stage = document.querySelector<HTMLElement>('#stage')!
 const grid = document.querySelector<HTMLElement>('#grid')!
-const frameReadout = document.querySelector<HTMLElement>('#frame-readout')!
+const soundHint = document.querySelector<HTMLElement>('#sound-hint')!
+const frameSelect = document.querySelector<HTMLSelectElement>('#frame')!
+const frameNote = document.querySelector<HTMLElement>('#frame-note')!
+const frameFitRow = document.querySelector<HTMLElement>('#frame-fit')!
 const hint = document.querySelector<HTMLElement>('#hint')!
 const addButton = document.querySelector<HTMLButtonElement>('#add')!
 const downloadButton = document.querySelector<HTMLButtonElement>('#download')!
@@ -32,12 +35,12 @@ const rowsMinus = document.querySelector<HTMLButtonElement>('#rows-minus')!
 const rowsPlus = document.querySelector<HTMLButtonElement>('#rows-plus')!
 
 const clips: Clip[] = []
-let shape: ShapePref = 'wide'
+let shape: ShapePref = 'square'
 let fit: Fit = 'contain'
-let frameId: FrameId = '1920x1080'
+let frameId: FrameId = 'grid'
+let frameFit: FrameFit = 'letterbox'
 let background = '#000000'
 let soundId: string | null = null
-let hasDragged = false
 let exporting = false
 let reading = false
 let lastExport: 'video' | 'gif' | null = null
@@ -108,7 +111,6 @@ for (const button of $('[data-shape]')) {
   button.addEventListener('click', () => {
     shape = button.dataset.shape as ShapePref
     customGrid = false
-    if (!frameMatchesShape(frameId, shape)) frameId = defaultFrame(shape)
     markDirty()
     render()
   })
@@ -139,10 +141,14 @@ for (const button of $('[data-fit]')) {
     render()
   })
 }
-for (const button of $('[data-frame]')) {
+frameSelect.addEventListener('change', () => {
+  frameId = frameSelect.value as FrameId
+  markDirty()
+  render()
+})
+for (const button of $('[data-frame-fit]')) {
   button.addEventListener('click', () => {
-    frameId = button.dataset.frame as FrameId
-    if (!customGrid) shape = shapeForFrame(frameId)
+    frameFit = button.dataset.frameFit as FrameFit
     markDirty()
     render()
   })
@@ -204,7 +210,6 @@ async function runDemo() {
     const { makeDemo } = await import('./demo')
     clips.push(...(await makeDemo()))
     soundId = null
-    hasDragged = false
     gridKey = ''
     render()
   } finally {
@@ -334,15 +339,15 @@ function playable(clip: Clip) {
 
 function resizeGrid(axis: 'cols' | 'rows', delta: number) {
   const current = currentGrid()
-  const cols = axis === 'cols' ? current.cols + delta : current.cols
-  const rows = axis === 'rows' ? current.rows + delta : current.rows
-  if (cols < 1 || rows < 1 || cols > 4 || rows > 4) return
-  if (cols * rows > MAX_CLIPS) {
-    setStatus('A grid can hold 12 clips.')
-    return
-  }
-  if (cols * rows < clips.length) {
-    setStatus('Remove a clip to make the grid smaller.')
+  let cols = current.cols
+  let rows = current.rows
+  if (axis === 'cols') cols += delta
+  else rows += delta
+  if (cols < 1 || rows < 1 || cols > MAX_CLIPS || rows > MAX_CLIPS) return
+  if (axis === 'cols') rows = Math.max(rows, Math.ceil(clips.length / cols))
+  else cols = Math.max(cols, Math.ceil(clips.length / rows))
+  if (cols > MAX_CLIPS || rows > MAX_CLIPS || cols * rows > MAX_CLIPS) {
+    setStatus(axis === 'cols' ? 'Remove a clip to use fewer columns.' : 'Remove a clip to use fewer rows.')
     return
   }
   customGrid = true
@@ -505,7 +510,6 @@ function liftCell(event: PointerEvent) {
   const cell = drag.cell
   const rect = cell.getBoundingClientRect()
   drag.active = true
-  hasDragged = true
   const placeholder = document.createElement('div')
   placeholder.className = 'cell placeholder'
   placeholder.dataset.placeholder = drag.id
@@ -612,34 +616,22 @@ function endDrag(event: PointerEvent) {
 }
 
 function sizeGrid(cols: number, rows: number) {
-  const frame = frameById(frameId)
+  const box =
+    frameId === 'grid'
+      ? { width: cols, height: rows }
+      : frameById(frameId)
   const maxWidth = Math.min(720, stage.parentElement?.clientWidth || 720)
-  const maxHeight = Math.max(180, window.innerHeight - 360)
-  const scale = Math.min(maxWidth / frame.width, maxHeight / frame.height)
-  const stageWidth = Math.max(160, frame.width * scale)
-  const stageHeight = stageWidth * (frame.height / frame.width)
+  const maxHeight = Math.max(180, window.innerHeight - 420)
+  const scale = Math.min(maxWidth / box.width, maxHeight / box.height)
+  const stageWidth = Math.max(160, box.width * scale)
+  const stageHeight = stageWidth * (box.height / box.width)
   stage.style.width = `${stageWidth}px`
   stage.style.height = `${stageHeight}px`
-  const cell = Math.min(stageWidth / cols, stageHeight / rows)
+  const cover = frameId !== 'grid' && frameFit === 'crop'
+  const cell = cover
+    ? Math.max(stageWidth / cols, stageHeight / rows)
+    : Math.min(stageWidth / cols, stageHeight / rows)
   grid.style.width = `${cell * cols}px`
-}
-
-function shapeForFrame(id: FrameId): ShapePref {
-  const frame = frameById(id)
-  const aspect = frame.width / frame.height
-  if (aspect > 1.15) return 'wide'
-  if (aspect < 0.9) return 'tall'
-  return 'square'
-}
-
-function defaultFrame(next: ShapePref): FrameId {
-  if (next === 'wide') return '1920x1080'
-  if (next === 'tall') return '1080x1920'
-  return '1080x1080'
-}
-
-function frameMatchesShape(id: FrameId, next: ShapePref) {
-  return shapeForFrame(id) === next
 }
 
 function updateSound() {
@@ -660,16 +652,10 @@ function updateSound() {
 }
 
 function updateHints() {
+  hint.hidden = clips.length < 2
+  hint.textContent = 'Drag to rearrange'
   const videos = clips.filter((clip) => clip.kind === 'video')
-  if (videos.length >= 2 && !soundId) {
-    hint.textContent = 'Tap the speaker on a video to add its sound.'
-    return
-  }
-  if (clips.length >= 2 && !hasDragged) {
-    hint.textContent = 'Drag a clip and the others slide aside.'
-    return
-  }
-  hint.textContent = ''
+  soundHint.hidden = videos.length < 2 || soundId !== null
 }
 
 function updateChoices() {
@@ -690,12 +676,22 @@ function updateChoices() {
   for (const button of $('[data-fit]')) {
     button.setAttribute('aria-pressed', String(button.dataset.fit === fit))
   }
-  for (const button of $('[data-frame]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.frame === frameId))
+  frameSelect.value = frameId
+  const picture = outputLayout(layout.cols, layout.rows, frameId, frameFit)
+  const mismatched =
+    frameId !== 'grid' && Math.abs(layout.cols / layout.rows - frameById(frameId).width / frameById(frameId).height) > 0.02
+  frameFitRow.hidden = !mismatched
+  for (const button of $('[data-frame-fit]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.frameFit === frameFit))
   }
-  const frame = frameById(frameId)
-  const gif = gifSize(frame.width, frame.height)
-  frameReadout.textContent = `Video ${frame.width}×${frame.height} · ${frame.ratio}. GIF ${gif.width}×${gif.height}.`
+  if (frameId === 'grid') {
+    frameNote.textContent = `Exports this grid at ${picture.width}×${picture.height}.`
+  } else {
+    const spec = frameById(frameId)
+    frameNote.textContent = mismatched
+      ? `${spec.use}. ${spec.width}×${spec.height}.`
+      : `${spec.use}. ${spec.width}×${spec.height}, same shape as the grid.`
+  }
   for (const button of $('[data-color]')) {
     button.setAttribute('aria-pressed', String(button.dataset.color?.toLowerCase() === background.toLowerCase()))
   }
@@ -736,6 +732,7 @@ async function save(share: boolean) {
       fit,
       background,
       frame: frameId,
+      frameFit,
       sound,
       clipSeconds,
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
@@ -746,10 +743,10 @@ async function save(share: boolean) {
     const shared = share ? await shareFile(blob) : false
     if (!shared) downloadBlob(blob, 'gif-grid.mp4')
     lastExport = 'video'
-    const frame = frameById(frameId)
+    const picture = outputLayout(cols, rows, frameId, frameFit)
     const saved = shared
-      ? `Shared a ${frame.width}×${frame.height} video.`
-      : `Check your Downloads folder for gif-grid.mp4 (${frame.width}×${frame.height}).`
+      ? `Shared a ${picture.width}×${picture.height} video.`
+      : `Check your Downloads folder for gif-grid.mp4 (${picture.width}×${picture.height}).`
     setStatus(soundFailed ? `${saved} This one has no sound.` : saved)
   } catch (error) {
     setStatus(
@@ -780,6 +777,7 @@ async function saveGif() {
       fit,
       background,
       frame: frameId,
+      frameFit,
       clipSeconds,
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
       onProgress: (done, total) => {
@@ -788,8 +786,8 @@ async function saveGif() {
     })
     downloadBlob(blob, 'grid.gif')
     lastExport = 'gif'
-    const gif = gifSize(frameById(frameId).width, frameById(frameId).height)
-    const saved = `Check your Downloads folder for grid.gif (${gif.width}×${gif.height}).`
+    const picture = outputLayout(cols, rows, frameId, frameFit)
+    const saved = `Check your Downloads folder for grid.gif (${picture.gifWidth}×${picture.gifHeight}).`
     setStatus(soundId ? `${saved} GIFs play with no sound.` : saved)
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'Couldn’t make the GIF. Try again.')

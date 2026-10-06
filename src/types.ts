@@ -1,6 +1,7 @@
 export type Fit = 'contain' | 'cover'
 export type ShapePref = 'square' | 'wide' | 'tall'
-export type FrameId = '1920x1080' | '1280x720' | '1080x1080' | '1080x1350' | '1080x1920' | '720x1280'
+export type FrameFit = 'letterbox' | 'crop'
+export type FrameId = 'grid' | '1920x1080' | '1280x720' | '1440x1080' | '1080x1920' | '720x1280' | '1080x1080' | '1080x1350'
 
 export type GifClip = {
   id: string
