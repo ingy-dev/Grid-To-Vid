@@ -32,6 +32,9 @@ const adjust = document.querySelector<HTMLElement>('#adjust')!
 const toast = document.querySelector<HTMLElement>('#toast')!
 const undoButton = document.querySelector<HTMLButtonElement>('#undo')!
 const shareButton = document.querySelector<HTMLButtonElement>('#share')!
+const busy = document.querySelector<HTMLElement>('#busy')!
+const busyLabel = document.querySelector<HTMLElement>('#busy-label')!
+const busyFill = document.querySelector<HTMLElement>('#busy-fill')!
 const colorInput = document.querySelector<HTMLInputElement>('#color')!
 const colsValue = document.querySelector<HTMLElement>('#cols-value')!
 const rowsValue = document.querySelector<HTMLElement>('#rows-value')!
@@ -243,6 +246,21 @@ function setStatus(text: string) {
   emptyStatus.textContent = text
 }
 
+function setBusy(label: string, done?: number, total?: number) {
+  busy.hidden = false
+  busyLabel.textContent = label
+  const known = done != null && total != null && total > 0
+  busy.classList.toggle('is-indeterminate', !known)
+  busyFill.style.width = known ? `${Math.max(4, Math.round((done / total) * 100))}%` : ''
+}
+
+function clearBusy() {
+  busy.hidden = true
+  busyLabel.textContent = ''
+  busyFill.style.width = ''
+  busy.classList.remove('is-indeterminate')
+}
+
 function markDirty() {
   lastExport = null
   readyVideo = null
@@ -253,6 +271,7 @@ async function runDemo() {
   if (reading || exporting) return
   reading = true
   setStatus('')
+  setBusy('Adding the demo…')
   demoButton.disabled = true
   try {
     clearUndo(true)
@@ -266,6 +285,7 @@ async function runDemo() {
   } finally {
     reading = false
     demoButton.disabled = false
+    clearBusy()
     render()
   }
 }
@@ -342,6 +362,7 @@ async function ingestDrop(transfer: DataTransfer) {
 async function ingestFiles(incoming: File[]) {
   if (reading || exporting) return
   reading = true
+  setBusy('Adding your photos…')
   render()
   const notes: string[] = []
   const slots = customGrid ? currentGrid().cols * currentGrid().rows : MAX_CLIPS
@@ -365,7 +386,8 @@ async function ingestFiles(incoming: File[]) {
       jobs = jobs.slice(0, room)
     }
     for (let index = 0; index < jobs.length; index++) {
-      setStatus(`Reading ${index + 1} of ${jobs.length}…`)
+      setBusy(`Adding ${index + 1} of ${jobs.length}`, index + 1, jobs.length)
+      setStatus(`Adding ${index + 1} of ${jobs.length}…`)
       const { clip, note } = await loadJob(jobs[index])
       if (note) notes.push(note)
       if (!clip) continue
@@ -375,6 +397,7 @@ async function ingestFiles(incoming: File[]) {
     }
   } finally {
     reading = false
+    clearBusy()
     markDirty()
     setStatus([...new Set(notes)].slice(0, 2).join(' '))
     render()
@@ -985,6 +1008,7 @@ async function save(share: boolean) {
   lastExport = null
   setStatus('')
   downloadButton.textContent = 'Making your video…'
+  setBusy('Making your video…')
   render()
   try {
     const { cols, rows } = currentGrid()
@@ -1003,7 +1027,9 @@ async function save(share: boolean) {
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
       fileSize,
       onProgress: (done, total) => {
-        downloadButton.textContent = `Making your video… ${done} of ${total}`
+        const label = `Making your video… ${done} of ${total}`
+        downloadButton.textContent = label
+        setBusy(label, done, total)
       },
     })
     readyVideo = blob
@@ -1036,6 +1062,7 @@ async function save(share: boolean) {
     )
   } finally {
     exporting = false
+    clearBusy()
     render()
   }
 }
@@ -1046,6 +1073,7 @@ async function saveGif() {
   lastExport = null
   setStatus('')
   gifButton.textContent = 'Making your GIF…'
+  setBusy('Making your GIF…')
   render()
   try {
     const { cols, rows } = currentGrid()
@@ -1062,7 +1090,9 @@ async function saveGif() {
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
       fileSize,
       onProgress: (done, total) => {
-        gifButton.textContent = `Making your GIF… ${done} of ${total}`
+        const label = `Making your GIF… ${done} of ${total}`
+        gifButton.textContent = label
+        setBusy(label, done, total)
       },
     })
     downloadBlob(blob, 'grid.gif')
@@ -1075,6 +1105,7 @@ async function saveGif() {
     setStatus(error instanceof Error ? error.message : 'Couldn’t make the GIF. Try again.')
   } finally {
     exporting = false
+    clearBusy()
     render()
   }
 }
@@ -1085,6 +1116,7 @@ async function savePng() {
   lastExport = null
   setStatus('')
   pngButton.textContent = 'Making your picture…'
+  setBusy('Making your picture…')
   render()
   try {
     const { cols, rows } = currentGrid()
@@ -1111,6 +1143,7 @@ async function savePng() {
     setStatus(error instanceof Error ? error.message : 'Couldn’t make the picture. Try again.')
   } finally {
     exporting = false
+    clearBusy()
     render()
   }
 }

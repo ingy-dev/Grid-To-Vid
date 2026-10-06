@@ -71,6 +71,35 @@ button { cursor: pointer; }
 .share-btn:hover { background: var(--card); }
 .share-btn:disabled { opacity: 0.55; cursor: progress; }
 
+.busy { margin: 12px 0 0; }
+.busy-label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 15px;
+  text-align: right;
+}
+.busy-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #e4ddd4;
+  overflow: hidden;
+}
+.busy-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--ink);
+}
+.busy.is-indeterminate .busy-fill {
+  width: 35%;
+  animation: busy-slide 1.1s ease-in-out infinite;
+}
+@keyframes busy-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(340%); }
+}
+
 .mast p,
 .lede,
 .quiet,
