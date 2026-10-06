@@ -69,6 +69,7 @@ button { cursor: pointer; }
 }
 
 .share-btn:hover { background: var(--card); }
+.share-btn:disabled { opacity: 0.55; cursor: progress; }
 
 .mast p,
 .lede,
@@ -388,6 +389,7 @@ body.is-rearranging {
 .primary-wrap .text-btn { margin-top: 0; }
 
 .quiet { text-align: center; font-size: 15px; margin: 14px auto 0; max-width: 46rem; }
+.photos-note { margin: 0; }
 
 .adjust-slot {
   width: min(520px, 100%);

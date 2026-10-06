@@ -22,6 +22,8 @@ const downloadButton = document.querySelector<HTMLButtonElement>('#download')!
 const gifButton = document.querySelector<HTMLButtonElement>('#download-gif')!
 const pngButton = document.querySelector<HTMLButtonElement>('#download-png')!
 const downloadInstead = document.querySelector<HTMLButtonElement>('#download-instead')!
+const savePhotosButton = document.querySelector<HTMLButtonElement>('#save-photos')!
+const photosNote = document.querySelector<HTMLElement>('#photos-note')!
 const status = document.querySelector<HTMLElement>('#status')!
 const emptyStatus = document.querySelector<HTMLElement>('#empty-status')!
 const fileInput = document.querySelector<HTMLInputElement>('#file')!
@@ -49,6 +51,8 @@ const soundIds = new Set<string>()
 let exporting = false
 let reading = false
 let lastExport: 'video' | 'gif' | 'png' | null = null
+let readyVideo: Blob | null = null
+let photosSave = false
 let gridKey = ''
 let customGrid = false
 let lockedCols = 2
@@ -81,6 +85,12 @@ const gifViews: {
   last: number
 }[] = []
 
+function isIos() {
+  const agent = navigator.userAgent
+  if (/iPad|iPhone|iPod/.test(agent)) return true
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+}
+
 function canShareFiles() {
   if (!navigator.canShare) return false
   try {
@@ -99,11 +109,18 @@ function $(selector: string) {
 dropTarget.addEventListener('click', () => fileInput.click())
 addButton.addEventListener('click', () => fileInput.click())
 demoButton.addEventListener('click', () => void runDemo())
-downloadButton.addEventListener('click', () => void save(shareMode))
+downloadButton.addEventListener('click', () => {
+  photosSave = false
+  void save(shareMode)
+})
 gifButton.addEventListener('click', () => void saveGif())
 pngButton.addEventListener('click', () => void savePng())
-downloadInstead.addEventListener('click', () => void save(false))
-shareButton.addEventListener('click', () => void shareSite())
+downloadInstead.addEventListener('click', () => {
+  photosSave = false
+  void save(false)
+})
+shareButton.addEventListener('click', () => void shareVideo())
+savePhotosButton.addEventListener('click', () => void saveToPhotos())
 undoButton.addEventListener('click', restoreRemoved)
 fileInput.addEventListener('change', () => {
   const files = fileInput.files
@@ -228,6 +245,7 @@ function setStatus(text: string) {
 
 function markDirty() {
   lastExport = null
+  readyVideo = null
   if (!exporting) setStatus('')
 }
 
@@ -944,6 +962,10 @@ function updateButtons() {
   downloadButton.disabled = locked
   gifButton.disabled = locked
   pngButton.disabled = locked
+  shareButton.disabled = locked
+  savePhotosButton.hidden = !isIos()
+  photosNote.hidden = savePhotosButton.hidden
+  savePhotosButton.disabled = locked
   downloadInstead.hidden = !shareMode || exporting
   if (exporting) return
   downloadButton.textContent = shareMode
@@ -984,13 +1006,20 @@ async function save(share: boolean) {
         downloadButton.textContent = `Making your video… ${done} of ${total}`
       },
     })
-    const shared = share ? await shareFile(blob) : false
-    if (!shared) downloadBlob(blob, 'gif-grid.mp4')
+    readyVideo = blob
+    const forPhotos = share && photosSave
+    const result = share ? await shareFile(blob, forPhotos) : 'download'
     lastExport = 'video'
     const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
-    const saved = shared
-      ? `Shared a ${picture.width}×${picture.height} video (${formatBytes(blob.size)}).`
-      : `Check your Downloads folder for gif-grid.mp4 (${picture.width}×${picture.height}, ${formatBytes(blob.size)}).`
+    if (result === 'cancelled') return
+    if (result === 'again') {
+      setStatus(
+        forPhotos ? 'Tap Save to Photos again, then tap Save Video.' : 'Tap Share again to send the video.',
+      )
+      return
+    }
+    if (result !== 'shared') downloadBlob(blob, 'gif-grid.mp4')
+    const saved = videoSaved(result === 'shared', forPhotos, picture.width, picture.height, blob.size)
     const clearNote = background === 'transparent' ? ' Clear areas are black in the video.' : ''
     setStatus(
       soundFailed
@@ -1096,43 +1125,86 @@ function shareMessage() {
   return `${SHARE_TEXT}\n${siteAddress()}`
 }
 
-async function shareSite() {
-  const text = shareMessage()
-  const url = siteAddress()
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: 'Grid to Vid', text, url })
-      return
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(text)
-    setStatus('Link copied.')
-  } catch {
-    setStatus('Couldn’t share from this browser.')
-  }
+async function shareVideo() {
+  photosSave = false
+  await offerVideo()
 }
 
-async function shareFile(blob: Blob) {
+async function saveToPhotos() {
+  photosSave = true
+  await offerVideo()
+}
+
+async function offerVideo() {
+  if (exporting || reading) return
+  if (!clips.length) {
+    setStatus('Add a photo or video first.')
+    return
+  }
+  if (readyVideo) {
+    await sendReadyVideo(readyVideo)
+    return
+  }
+  await save(true)
+}
+
+function videoSaved(shared: boolean, forPhotos: boolean, width: number, height: number, bytes: number) {
+  if (shared && forPhotos) return 'Check the Photos app.'
+  if (shared) return `Shared a ${width}×${height} video (${formatBytes(bytes)}).`
+  if (forPhotos) {
+    return `Couldn’t open the Photos menu. Check your Downloads folder for gif-grid.mp4 (${width}×${height}, ${formatBytes(bytes)}).`
+  }
+  return `Check your Downloads folder for gif-grid.mp4 (${width}×${height}, ${formatBytes(bytes)}).`
+}
+
+async function sendReadyVideo(blob: Blob) {
+  const forPhotos = photosSave
+  const { cols, rows } = currentGrid()
+  const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
+  const result = await shareFile(blob, forPhotos)
+  if (result === 'cancelled') return
+  if (result === 'again') {
+    setStatus(forPhotos ? 'Tap Save to Photos again, then tap Save Video.' : 'Tap Share again to send the video.')
+    return
+  }
+  if (result !== 'shared') downloadBlob(blob, 'gif-grid.mp4')
+  setStatus(videoSaved(result === 'shared', forPhotos, picture.width, picture.height, blob.size))
+}
+
+async function shareFile(blob: Blob, photos = false): Promise<'shared' | 'cancelled' | 'again' | 'download'> {
+  if (!navigator.share) return 'download'
   const file = new File([blob], 'gif-grid.mp4', { type: 'video/mp4' })
-  if (!navigator.canShare?.({ files: [file] })) return false
-  const text = shareMessage()
-  const url = siteAddress()
-  const attempts: ShareData[] = [
-    { files: [file], title: 'Grid to Vid', text, url },
-    { files: [file], title: 'Grid to Vid', text },
-  ]
-  for (const data of attempts) {
+  const withText: ShareData = { files: [file], title: 'Grid to Vid', text: shareMessage() }
+  const filesOnly: ShareData = photos ? { files: [file] } : { files: [file], title: 'Grid to Vid' }
+  const allowed = (data: ShareData) => {
+    if (!navigator.canShare) return true
     try {
-      await navigator.share(data)
-      return true
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return true
+      return navigator.canShare(data)
+    } catch {
+      return false
     }
   }
-  return false
+  const data = photos ? (allowed(filesOnly) ? filesOnly : null) : allowed(withText) ? withText : allowed(filesOnly) ? filesOnly : null
+  if (!data) return 'download'
+  try {
+    await navigator.share(data)
+    return 'shared'
+  } catch (error) {
+    const name = error instanceof DOMException ? error.name : ''
+    if (name === 'AbortError') return 'cancelled'
+    if (name === 'NotAllowedError') return 'again'
+    if (data !== filesOnly && allowed(filesOnly)) {
+      try {
+        await navigator.share(filesOnly)
+        return 'shared'
+      } catch (again) {
+        const next = again instanceof DOMException ? again.name : ''
+        if (next === 'AbortError') return 'cancelled'
+        if (next === 'NotAllowedError') return 'again'
+      }
+    }
+    return 'download'
+  }
 }
 
 function formatBytes(bytes: number) {
