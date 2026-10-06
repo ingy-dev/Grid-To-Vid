@@ -253,7 +253,10 @@ body.is-rearranging {
 }
 
 .icon-btn.remove { right: 8px; font-size: 26px; line-height: 1; }
+.icon-btn.live { left: 8px; }
+.icon-btn.live[aria-pressed="true"] { color: #ffd60a; }
 .icon-btn.speaker { left: 8px; }
+.cell:has(.live) .icon-btn.speaker { left: 56px; }
 .icon-btn.speaker[aria-pressed="true"] {
   background: white;
   color: #111;

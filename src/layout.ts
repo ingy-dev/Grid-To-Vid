@@ -1,4 +1,4 @@
-import { MAX_CLIP_SECONDS, type Fit, type FrameFit, type FrameId, type ShapePref } from './types'
+import { MAX_CLIP_SECONDS, type FileSize, type Fit, type FrameFit, type FrameId, type ShapePref } from './types'
 
 export const FPS = 30
 
@@ -79,12 +79,39 @@ export function frameById(id: Exclude<FrameId, 'grid'>): FrameSpec {
   return found
 }
 
-export function gifSize(width: number, height: number) {
-  const longEdge = 640
+const GIF_EDGE: Record<FileSize, number> = { small: 360, medium: 480, large: 640, actual: 800 }
+const GIF_COLORS: Record<FileSize, number> = { small: 64, medium: 128, large: 192, actual: 256 }
+const FILE_BITRATE: Record<Exclude<FileSize, 'actual'>, number> = {
+  small: 2_000_000,
+  medium: 4_000_000,
+  large: 8_000_000,
+}
+
+export function gifSize(width: number, height: number, longEdge = 640) {
   if (width >= height) {
     return { width: longEdge, height: even(height * (longEdge / width)) }
   }
   return { width: even(width * (longEdge / height)), height: longEdge }
+}
+
+export function videoBitrate(width: number, height: number, fileSize: Exclude<FileSize, 'actual'>): number {
+  const scale = Math.pow((width * height) / (1920 * 1080), 0.95)
+  return Math.max(500_000, Math.ceil((FILE_BITRATE[fileSize] * scale) / 1000) * 1000)
+}
+
+export function exportMegabytes(
+  width: number,
+  height: number,
+  seconds: number,
+  fileSize: FileSize,
+  withAudio: boolean,
+): number {
+  const audio = withAudio ? (fileSize === 'small' ? 96_000 : fileSize === 'actual' ? 160_000 : 128_000) : 0
+  const video =
+    fileSize === 'actual'
+      ? 18_000_000 * Math.pow((width * height) / (1920 * 1080), 0.95)
+      : videoBitrate(width, height, fileSize)
+  return Math.max(0.1, ((video + audio) * Math.max(0.1, seconds)) / 8 / 1_000_000)
 }
 
 function even(value: number) {
@@ -92,25 +119,33 @@ function even(value: number) {
   return rounded % 2 === 0 ? rounded : rounded - 1
 }
 
-export function outputLayout(cols: number, rows: number, frameId: FrameId, frameFit: FrameFit) {
+export function outputLayout(
+  cols: number,
+  rows: number,
+  frameId: FrameId,
+  frameFit: FrameFit,
+  fileSize: FileSize = 'medium',
+) {
+  const edge = GIF_EDGE[fileSize]
+  const colors = GIF_COLORS[fileSize]
   if (frameId === 'grid') {
     const placed = naturalGrid(cols, rows, 1080)
-    const gif = gifSize(placed.width, placed.height)
+    const gif = gifSize(placed.width, placed.height, edge)
     const gifPlaced = placeGrid(cols, rows, gif.width, gif.height, 'letterbox')
-    return pack(placed, gifPlaced, ratioText(placed.width, placed.height), true)
+    return pack(placed, gifPlaced, ratioText(placed.width, placed.height), colors)
   }
   const frame = frameById(frameId)
   const placed = placeGrid(cols, rows, frame.width, frame.height, frameFit)
-  const gif = gifSize(frame.width, frame.height)
+  const gif = gifSize(frame.width, frame.height, edge)
   const gifPlaced = placeGrid(cols, rows, gif.width, gif.height, frameFit)
-  return pack(placed, gifPlaced, frame.ratio, Math.max(frame.width, frame.height) >= 1080)
+  return pack(placed, gifPlaced, frame.ratio, colors)
 }
 
 function pack(
   placed: ReturnType<typeof placeGrid>,
   gifPlaced: ReturnType<typeof placeGrid>,
   ratio: string,
-  large: boolean,
+  gifColors: number,
 ) {
   return {
     ...placed,
@@ -120,8 +155,7 @@ function pack(
     gifCell: gifPlaced.cell,
     gifOffsetX: gifPlaced.offsetX,
     gifOffsetY: gifPlaced.offsetY,
-    gifColors: large ? 256 : 128,
-    quality: large ? ('high' as const) : ('medium' as const),
+    gifColors,
   }
 }
 

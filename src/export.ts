@@ -15,8 +15,8 @@ import {
   type VideoSample,
 } from 'mediabunny'
 import { GIFEncoder, applyPalette, quantize } from 'gifenc'
-import { clipFrameCount, exportFrameCount, FPS, outputLayout, placedRect, usedSeconds } from './layout'
-import type { Clip, Fit, FrameFit, FrameId, GifClip, VideoClip } from './types'
+import { clipFrameCount, exportFrameCount, FPS, outputLayout, placedRect, usedSeconds, videoBitrate } from './layout'
+import { liveStill, type Clip, type FileSize, type Fit, type FrameFit, type FrameId, type GifClip, type VideoClip } from './types'
 
 const ENCODE_ERROR = 'Couldn’t make the video in this browser. Open this page in Chrome and try again.'
 const GIF_ERROR = 'Couldn’t make the GIF. Try again.'
@@ -62,7 +62,7 @@ function concatAudio(buffers: AudioBuffer[]) {
   const channels = Math.max(...buffers.map((buffer) => buffer.numberOfChannels))
   const rate = buffers[0].sampleRate
   const length = buffers.reduce((sum, buffer) => sum + buffer.length, 0)
-  const context = new AudioContext()
+  const context = new AudioContext({ sampleRate: rate })
   const mixed = context.createBuffer(channels, Math.max(1, length), rate)
   for (let channel = 0; channel < channels; channel++) {
     const destination = mixed.getChannelData(channel)
@@ -77,11 +77,38 @@ function concatAudio(buffers: AudioBuffer[]) {
   return mixed
 }
 
+function mixAudio(buffers: AudioBuffer[]): AudioBuffer {
+  const rate = Math.max(...buffers.map((buffer) => buffer.sampleRate))
+  const channels = Math.min(2, Math.max(...buffers.map((buffer) => buffer.numberOfChannels)))
+  const length = Math.max(1, ...buffers.map((buffer) => Math.round(buffer.duration * rate)))
+  const context = new AudioContext({ sampleRate: rate })
+  const mixed = context.createBuffer(channels, length, rate)
+  const gain = 1 / buffers.length
+  for (let channel = 0; channel < channels; channel++) {
+    const into = mixed.getChannelData(channel)
+    for (const buffer of buffers) {
+      const from = buffer.getChannelData(Math.min(channel, buffer.numberOfChannels - 1))
+      if (!from.length) continue
+      const step = buffer.sampleRate / rate
+      for (let i = 0; i < into.length; i++) {
+        const position = i * step
+        const index = Math.floor(position)
+        if (index >= from.length) continue
+        const next = Math.min(index + 1, from.length - 1)
+        const blend = position - index
+        into[i] += (from[index] * (1 - blend) + from[next] * blend) * gain
+      }
+    }
+  }
+  void context.close()
+  return mixed
+}
+
 function loopAudio(source: AudioBuffer, seconds: number) {
   const channels = source.numberOfChannels
   const rate = source.sampleRate
   const length = Math.max(1, Math.ceil(seconds * rate))
-  const context = new AudioContext()
+  const context = new AudioContext({ sampleRate: rate })
   const looped = context.createBuffer(channels, length, rate)
   for (let channel = 0; channel < channels; channel++) {
     const from = source.getChannelData(channel)
@@ -122,20 +149,26 @@ export async function exportGrid(options: {
   background: string
   frame: FrameId
   frameFit: FrameFit
-  sound: VideoClip | null
+  sounds: VideoClip[]
   clipSeconds: number
   lengthSeconds: number | null
+  fileSize: FileSize
   onProgress: (done: number, total: number) => void
-}): Promise<{ blob: Blob; soundFailed: boolean }> {
-  const { clips, cols, rows, fit, background, frame, frameFit, sound, clipSeconds, lengthSeconds, onProgress } = options
-  const layout = outputLayout(cols, rows, frame, frameFit)
+}): Promise<{ blob: Blob; soundFailed: boolean; soundPartial: boolean }> {
+  const { clips, cols, rows, fit, background, frame, frameFit, sounds, clipSeconds, lengthSeconds, fileSize, onProgress } = options
+  const layout = outputLayout(cols, rows, frame, frameFit, fileSize)
   const { cell, width, height, offsetX, offsetY } = layout
   const frameCount = exportFrameCount(
     clips.map((clip) => usedSeconds(clip.duration, clipSeconds)),
     lengthSeconds,
   )
   const exportSeconds = frameCount / FPS
-  const quality = new Quality(layout.quality)
+  const quality =
+    fileSize === 'actual'
+      ? new Quality('high')
+      : new Quality({ bitrate: videoBitrate(width, height, fileSize), bitrateMode: 'variable' })
+  const audioQuality =
+    fileSize === 'actual' ? new Quality('high') : new Quality({ bitrate: fileSize === 'small' ? 96_000 : 128_000 })
   const format = new Mp4OutputFormat({ fastStart: 'in-memory' })
   const videoCodecs = format.getSupportedVideoCodecs()
   const codec =
@@ -147,15 +180,21 @@ export async function exportGrid(options: {
   if (!codec || typeof VideoEncoder === 'undefined') throw new Error(ENCODE_ERROR)
 
   let soundFailed = false
+  let soundPartial = false
   let audioBuffer: AudioBuffer | null = null
-  if (sound) {
-    try {
-      audioBuffer = await audioFor(sound, usedSeconds(sound.duration, clipSeconds), exportSeconds)
-      soundFailed = audioBuffer === null
-    } catch {
-      soundFailed = true
-      audioBuffer = null
+  if (sounds.length) {
+    const pieces: AudioBuffer[] = []
+    for (const clip of sounds) {
+      try {
+        const piece = await audioFor(clip, usedSeconds(clip.duration, clipSeconds), exportSeconds)
+        if (piece) pieces.push(piece)
+      } catch {
+        // This clip is skipped. The others can still play.
+      }
     }
+    audioBuffer = pieces.length ? mixAudio(pieces) : null
+    soundFailed = pieces.length === 0
+    soundPartial = pieces.length > 0 && pieces.length < sounds.length
   }
 
   const target = new BufferTarget()
@@ -198,12 +237,12 @@ export async function exportGrid(options: {
           const audioCodec = await getFirstEncodableAudioCodec(ordered, {
             numberOfChannels: audioBuffer.numberOfChannels,
             sampleRate: audioBuffer.sampleRate,
-            quality: new Quality('medium'),
+            quality: audioQuality,
           })
           if (!audioCodec) {
             soundFailed = true
           } else {
-            encoded.audio = new AudioBufferSource({ codec: audioCodec, quality: new Quality('medium') })
+            encoded.audio = new AudioBufferSource({ codec: audioCodec, quality: audioQuality })
             output.addAudioTrack(encoded.audio)
           }
         }
@@ -219,7 +258,7 @@ export async function exportGrid(options: {
   await output.finalize()
   const buffer = target.buffer
   if (!buffer) throw new Error(ENCODE_ERROR)
-  return { blob: new Blob([buffer], { type: 'video/mp4' }), soundFailed }
+  return { blob: new Blob([buffer], { type: 'video/mp4' }), soundFailed, soundPartial }
 }
 
 export async function exportGif(options: {
@@ -232,10 +271,11 @@ export async function exportGif(options: {
   frameFit: FrameFit
   clipSeconds: number
   lengthSeconds: number | null
+  fileSize: FileSize
   onProgress: (done: number, total: number) => void
 }): Promise<Blob> {
-  const { clips, cols, rows, fit, background, frame, frameFit, clipSeconds, lengthSeconds, onProgress } = options
-  const layout = outputLayout(cols, rows, frame, frameFit)
+  const { clips, cols, rows, fit, background, frame, frameFit, clipSeconds, lengthSeconds, fileSize, onProgress } = options
+  const layout = outputLayout(cols, rows, frame, frameFit, fileSize)
   const colors = layout.gifColors
   const cell = layout.gifCell
   const width = layout.gifWidth
@@ -243,7 +283,8 @@ export async function exportGif(options: {
   const offsetX = layout.gifOffsetX
   const offsetY = layout.gifOffsetY
   const gif = GIFEncoder()
-  const delay = Math.round(1000 / FPS)
+  const stride = fileSize === 'small' ? 3 : fileSize === 'actual' ? 1 : 2
+  const delay = Math.round((1000 / FPS) * stride)
 
   await paintFrames(
     {
@@ -261,7 +302,8 @@ export async function exportGif(options: {
       failure: GIF_ERROR,
       onProgress,
     },
-    async (ctx) => {
+    async (ctx, index) => {
+      if (index % stride !== 0) return
       const rgba = new Uint8Array(ctx.getImageData(0, 0, width, height).data)
       const palette = quantize(rgba, colors)
       const indexed = applyPalette(rgba, palette)
@@ -303,7 +345,7 @@ async function paintFrames(
   const opened: { clip: VideoClip; input: Input; sampler: VideoSampler; frames: number }[] = []
   try {
     for (const clip of clips) {
-      if (clip.kind !== 'video') continue
+      if (clip.kind !== 'video' || liveStill(clip)) continue
       const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clip.file) })
       try {
         const track = await input.getPrimaryVideoTrack()
@@ -349,6 +391,9 @@ async function paintFrames(
         ctx.clip()
         if (clip.kind === 'gif') {
           drawGif(ctx, clip, (i % (gifFrames.get(clip.id) ?? 1)) / FPS, x, y, cell, fit)
+        } else if (liveStill(clip)) {
+          const rect = placedRect(clip.still.width, clip.still.height, x, y, cell, cell, fit)
+          ctx.drawImage(clip.still, rect.dx, rect.dy, rect.dw, rect.dh)
         } else {
           const item = byId.get(clip.id)
           if (item) {

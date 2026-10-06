@@ -5,5 +5,6 @@ export function disposeClip(clip: Clip) {
     for (const frame of clip.frames) frame.close()
     return
   }
+  clip.still?.close()
   URL.revokeObjectURL(clip.url)
 }

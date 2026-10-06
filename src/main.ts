@@ -1,7 +1,7 @@
-import { kindOf } from './files'
-import { frameById, gridShape, outputLayout, usedSeconds } from './layout'
+import type { ImportJob } from './live'
+import { exportFrameCount, exportMegabytes, FPS, frameById, gridShape, outputLayout, usedSeconds } from './layout'
 import { disposeClip } from './state'
-import type { Clip, Fit, FrameFit, FrameId, ShapePref, VideoClip } from './types'
+import { liveStill, type Clip, type FileSize, type Fit, type FrameFit, type FrameId, type ShapePref, type VideoClip } from './types'
 import { MAX_BYTES, MAX_CLIPS } from './types'
 
 const empty = document.querySelector<HTMLElement>('#empty')!
@@ -13,6 +13,8 @@ const grid = document.querySelector<HTMLElement>('#grid')!
 const soundHint = document.querySelector<HTMLElement>('#sound-hint')!
 const frameSelect = document.querySelector<HTMLSelectElement>('#frame')!
 const frameNote = document.querySelector<HTMLElement>('#frame-note')!
+const fileSizeSelect = document.querySelector<HTMLSelectElement>('#file-size')!
+const fileSizeNote = document.querySelector<HTMLElement>('#file-size-note')!
 const frameFitRow = document.querySelector<HTMLElement>('#frame-fit')!
 const hint = document.querySelector<HTMLElement>('#hint')!
 const addButton = document.querySelector<HTMLButtonElement>('#add')!
@@ -39,8 +41,9 @@ let shape: ShapePref = 'square'
 let fit: Fit = 'contain'
 let frameId: FrameId = 'grid'
 let frameFit: FrameFit = 'letterbox'
+let fileSize: FileSize = 'medium'
 let background = '#000000'
-let soundId: string | null = null
+const soundIds = new Set<string>()
 let exporting = false
 let reading = false
 let lastExport: 'video' | 'gif' | null = null
@@ -146,6 +149,11 @@ frameSelect.addEventListener('change', () => {
   markDirty()
   render()
 })
+fileSizeSelect.addEventListener('change', () => {
+  fileSize = fileSizeSelect.value as FileSize
+  markDirty()
+  render()
+})
 for (const button of $('[data-frame-fit]')) {
   button.addEventListener('click', () => {
     frameFit = button.dataset.frameFit as FrameFit
@@ -209,7 +217,7 @@ async function runDemo() {
     clips.splice(0, clips.length)
     const { makeDemo } = await import('./demo')
     clips.push(...(await makeDemo()))
-    soundId = null
+    soundIds.clear()
     gridKey = ''
     render()
   } finally {
@@ -232,7 +240,7 @@ async function ingestDrop(transfer: DataTransfer) {
     if (file) files.push(file)
   }
   if (!files.length && folder) {
-    setStatus('Drop the GIF or video files themselves.')
+    setStatus('Drop the photos or videos themselves.')
     return
   }
   await ingestFiles(files)
@@ -245,41 +253,30 @@ async function ingestFiles(incoming: File[]) {
   const notes: string[] = []
   const capacity = customGrid ? currentGrid().cols * currentGrid().rows : MAX_CLIPS
   const room = Math.max(0, capacity - clips.length)
-  let files = incoming.filter((file) => file.size > 0 || file.type || file.name)
-  if (files.length > room) {
-    notes.push(
-      room === 0 && customGrid
-        ? 'Add a row or a column to fit another clip.'
-        : room === 0
-          ? 'Using the first 12. Remove one to add another.'
-          : 'Using the first ones that fit.',
-    )
-    files = files.slice(0, room)
-  }
+  const files = incoming.filter((file) => file.size > 0 || file.type || file.name)
   try {
-    for (let index = 0; index < files.length; index++) {
-      const file = files[index]
-      setStatus(`Reading ${index + 1} of ${files.length}…`)
-      if (file.size > MAX_BYTES) {
-        notes.push('That one’s too big. Try a GIF or video under 15 MB.')
-        continue
-      }
-      const kind = kindOf(file)
-      if (!kind) {
-        notes.push('Use a GIF or a video.')
-        continue
-      }
-      try {
-        const clip =
-          kind === 'gif'
-            ? await import('./gif').then((mod) => mod.loadGif(file))
-            : await import('./video').then((mod) => mod.loadVideo(file))
-        clips.push(clip)
-        gridKey = ''
-        render()
-      } catch (error) {
-        notes.push(error instanceof Error ? error.message : 'Use a GIF or a video.')
-      }
+    const { planImports } = await import('./live')
+    const planned = await planImports(files)
+    notes.push(...planned.notes)
+    let jobs = planned.jobs
+    if (jobs.length > room) {
+      notes.push(
+        room === 0 && customGrid
+          ? 'Add a row or a column to fit another clip.'
+          : room === 0
+            ? 'Using the first 12. Remove one to add another.'
+            : 'Using the first ones that fit.',
+      )
+      jobs = jobs.slice(0, room)
+    }
+    for (let index = 0; index < jobs.length; index++) {
+      setStatus(`Reading ${index + 1} of ${jobs.length}…`)
+      const { clip, note } = await loadJob(jobs[index])
+      if (note) notes.push(note)
+      if (!clip) continue
+      clips.push(clip)
+      gridKey = ''
+      render()
     }
   } finally {
     reading = false
@@ -289,12 +286,67 @@ async function ingestFiles(incoming: File[]) {
   }
 }
 
+async function loadJob(job: ImportJob): Promise<{ clip: Clip | null; note?: string }> {
+  const tooBig = 'That one’s too big. Try one under 40 MB.'
+  if (job.kind === 'pair') {
+    if (job.video.size <= MAX_BYTES) {
+      try {
+        const clip = await import('./video').then((mod) => mod.loadVideo(job.video))
+        return { clip: await attachLiveStill({ ...clip, live: true, liveOn: true }, job.still) }
+      } catch {
+        if (job.still.size > MAX_BYTES) return { clip: null, note: tooBig }
+        try {
+          const clip = await import('./image').then((mod) => mod.loadImage(job.still))
+          return { clip, note: 'Showing the photo. This browser can’t play the motion.' }
+        } catch (error) {
+          return { clip: null, note: error instanceof Error ? error.message : 'Couldn’t use that Live Photo.' }
+        }
+      }
+    }
+    if (job.still.size > MAX_BYTES) return { clip: null, note: tooBig }
+    try {
+      const clip = await import('./image').then((mod) => mod.loadImage(job.still))
+      return { clip, note: 'That video’s too big. Showing the photo instead.' }
+    } catch (error) {
+      return { clip: null, note: error instanceof Error ? error.message : tooBig }
+    }
+  }
+  if (job.file.size > MAX_BYTES) return { clip: null, note: tooBig }
+  try {
+    if (job.kind === 'gif') return { clip: await import('./gif').then((mod) => mod.loadGif(job.file)) }
+    if (job.kind === 'video') {
+      const clip = await import('./video').then((mod) => mod.loadVideo(job.file))
+      return { clip: clip.live ? await attachLiveStill({ ...clip, liveOn: true }) : clip }
+    }
+    return { clip: await import('./image').then((mod) => mod.loadImage(job.file)) }
+  } catch (error) {
+    return { clip: null, note: error instanceof Error ? error.message : 'Use a photo, a GIF, or a video.' }
+  }
+}
+
+async function attachLiveStill(clip: VideoClip, stillFile?: File): Promise<VideoClip> {
+  if (stillFile && stillFile.size <= MAX_BYTES) {
+    try {
+      const photo = await import('./image').then((mod) => mod.loadImage(stillFile))
+      const still = photo.frames[0]
+      for (const frame of photo.frames.slice(1)) frame.close()
+      if (still) return { ...clip, live: true, liveOn: true, still }
+    } catch {
+      // The motion can still play without the key photo.
+    }
+  }
+  const still = await import('./video').then((mod) =>
+    mod.posterFrame(clip.file, Math.max(0, Math.min(clip.duration / 2, clip.duration - 0.05))),
+  )
+  return still ? { ...clip, live: true, liveOn: true, still } : { ...clip, live: true, liveOn: true }
+}
+
 function removeClip(id: string) {
   const index = clips.findIndex((clip) => clip.id === id)
   if (index < 0) return
   clearUndo(true)
   const [clip] = clips.splice(index, 1)
-  if (soundId === id) soundId = null
+  soundIds.delete(id)
   undo = { clip, index }
   toast.hidden = false
   window.clearTimeout(undoTimer)
@@ -393,33 +445,9 @@ function paintGrid(cols: number, rows: number) {
     const cell = document.createElement('div')
     cell.className = 'cell'
     cell.dataset.id = clip.id
-    if (clip.kind === 'gif') {
-      const canvas = document.createElement('canvas')
-      canvas.width = clip.width
-      canvas.height = clip.height
-      cell.append(canvas)
-      gifViews.push({ canvas, clip, index: 0, time: 0, last: performance.now() })
-    } else {
-      cell.append(makeVideo(clip))
-      if (clip.hasAudio) {
-        const speaker = document.createElement('button')
-        speaker.type = 'button'
-        speaker.className = 'icon-btn speaker'
-        speaker.innerHTML = speakerIcon()
-        speaker.addEventListener('click', () => {
-          soundId = soundId === clip.id ? null : clip.id
-          markDirty()
-          render()
-        })
-        cell.append(speaker)
-      }
-    }
-    if (clip.duration > clipSeconds + 0.05) {
-      const badge = document.createElement('p')
-      badge.className = 'badge'
-      badge.textContent = `First ${clipSeconds} seconds`
-      cell.append(badge)
-    }
+    mountMedia(cell, clip)
+    const note = tileNote(clip)
+    if (note) cell.append(makeBadge(note))
     const remove = document.createElement('button')
     remove.type = 'button'
     remove.className = 'icon-btn remove'
@@ -441,6 +469,114 @@ function paintGrid(cols: number, rows: number) {
     grid.append(add)
   }
   drawGifFrame()
+}
+
+function tileNote(clip: Clip): string {
+  if (liveStill(clip)) return ''
+  if (clip.duration > clipSeconds + 0.05) return `First ${clipSeconds} seconds`
+  return ''
+}
+
+function mountMedia(cell: HTMLElement, clip: Clip) {
+  if (clip.kind === 'gif') {
+    const canvas = document.createElement('canvas')
+    canvas.width = clip.width
+    canvas.height = clip.height
+    cell.append(canvas)
+    gifViews.push({ canvas, clip, index: 0, time: 0, last: performance.now() })
+    return
+  }
+  const stillMode = liveStill(clip)
+  cell.append(stillMode ? makeStill(clip.still) : makeVideo(clip))
+  if (clip.live && clip.still) cell.append(makeLiveButton(clip))
+  if (!stillMode && clip.hasAudio) cell.append(makeSpeaker(clip))
+}
+
+function makeStill(bitmap: ImageBitmap) {
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+  return canvas
+}
+
+function makeBadge(text: string) {
+  const badge = document.createElement('p')
+  badge.className = 'badge'
+  badge.textContent = text
+  return badge
+}
+
+function makeLiveButton(clip: VideoClip) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'icon-btn live'
+  const on = clip.liveOn !== false
+  button.setAttribute('aria-pressed', String(on))
+  button.setAttribute('aria-label', 'Live Photo')
+  button.innerHTML = liveIcon(on)
+  button.addEventListener('click', () => toggleLive(clip.id))
+  return button
+}
+
+function makeSpeaker(clip: VideoClip) {
+  const speaker = document.createElement('button')
+  speaker.type = 'button'
+  speaker.className = 'icon-btn speaker'
+  speaker.innerHTML = speakerIcon()
+  speaker.addEventListener('click', () => {
+    if (soundIds.has(clip.id)) soundIds.delete(clip.id)
+    else soundIds.add(clip.id)
+    markDirty()
+    render()
+  })
+  return speaker
+}
+
+function toggleLive(id: string) {
+  if (exporting || reading) return
+  const clip = clips.find((item) => item.id === id)
+  if (!clip || clip.kind !== 'video' || !clip.still) return
+  clip.liveOn = clip.liveOn === false
+  if (clip.liveOn === false) soundIds.delete(id)
+  markDirty()
+  const cell = grid.querySelector<HTMLElement>(`.cell[data-id="${id}"]`)
+  if (cell) {
+    cell.querySelector('video')?.remove()
+    cell.querySelector('canvas')?.remove()
+    cell.querySelector('.speaker')?.remove()
+    cell.querySelector('.badge')?.remove()
+    const stillMode = liveStill(clip)
+    const media = stillMode ? makeStill(clip.still) : makeVideo(clip)
+    cell.prepend(media)
+    if (!stillMode && clip.hasAudio) {
+      const live = cell.querySelector('.live')
+      const speaker = makeSpeaker(clip)
+      if (live) live.after(speaker)
+      else cell.append(speaker)
+    }
+    const live = cell.querySelector<HTMLButtonElement>('.live')
+    if (live) {
+      const on = clip.liveOn !== false
+      live.setAttribute('aria-pressed', String(on))
+      live.innerHTML = liveIcon(on)
+    }
+    const note = tileNote(clip)
+    if (note) {
+      const remove = cell.querySelector('.remove')
+      const badge = makeBadge(note)
+      if (remove) remove.before(badge)
+      else cell.append(badge)
+    }
+  }
+  render()
+}
+
+function liveIcon(on: boolean) {
+  const slash = on
+    ? ''
+    : '<line x1="4.2" y1="19.8" x2="19.8" y2="4.2" stroke="#000" stroke-width="4.4" stroke-linecap="round"/><line x1="4.2" y1="19.8" x2="19.8" y2="4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+  return `<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="2.35" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="5.7"/><circle cx="12" cy="12" r="9.15"/>${slash}</svg>`
 }
 
 function makeVideo(clip: VideoClip) {
@@ -635,9 +771,14 @@ function sizeGrid(cols: number, rows: number) {
 }
 
 function updateSound() {
-  for (const video of grid.querySelectorAll('video')) {
+  const playing = [...grid.querySelectorAll('video')].filter((video) => {
     const cell = video.closest<HTMLElement>('[data-id]')
-    const on = cell?.dataset.id === soundId
+    return cell?.dataset.id != null && soundIds.has(cell.dataset.id)
+  })
+  const gain = playing.length ? 1 / playing.length : 1
+  for (const video of grid.querySelectorAll('video')) {
+    const on = playing.includes(video)
+    video.volume = gain
     video.muted = !on
     if (on) video.removeAttribute('muted')
     else video.setAttribute('muted', '')
@@ -645,17 +786,17 @@ function updateSound() {
   }
   for (const button of grid.querySelectorAll<HTMLButtonElement>('.speaker')) {
     const cell = button.closest<HTMLElement>('[data-id]')
-    const on = cell?.dataset.id === soundId
+    const on = cell?.dataset.id != null && soundIds.has(cell.dataset.id)
     button.setAttribute('aria-pressed', String(on))
-    button.setAttribute('aria-label', on ? 'Turn sound off' : 'Use sound from this video')
+    button.setAttribute('aria-label', on ? 'Turn this sound off' : 'Add sound from this clip')
   }
 }
 
 function updateHints() {
   hint.hidden = clips.length < 2
   hint.textContent = 'Drag to rearrange'
-  const videos = clips.filter((clip) => clip.kind === 'video')
-  soundHint.hidden = videos.length < 2 || soundId !== null
+  const audible = clips.filter((clip) => clip.kind === 'video' && clip.hasAudio && !liveStill(clip))
+  soundHint.hidden = audible.length < 2 || soundIds.size > 0
 }
 
 function updateChoices() {
@@ -677,7 +818,8 @@ function updateChoices() {
     button.setAttribute('aria-pressed', String(button.dataset.fit === fit))
   }
   frameSelect.value = frameId
-  const picture = outputLayout(layout.cols, layout.rows, frameId, frameFit)
+  fileSizeSelect.value = fileSize
+  const picture = outputLayout(layout.cols, layout.rows, frameId, frameFit, fileSize)
   const mismatched =
     frameId !== 'grid' && Math.abs(layout.cols / layout.rows - frameById(frameId).width / frameById(frameId).height) > 0.02
   frameFitRow.hidden = !mismatched
@@ -692,6 +834,16 @@ function updateChoices() {
       ? `${spec.use}. ${spec.width}×${spec.height}.`
       : `${spec.use}. ${spec.width}×${spec.height}, same shape as the grid.`
   }
+  const seconds =
+    exportFrameCount(
+      clips.map((clip) => usedSeconds(clip.duration, clipSeconds)),
+      lengthChoice === 'auto' ? null : lengthChoice,
+    ) / FPS
+  const withAudio = clips.some((clip) => soundIds.has(clip.id) && clip.kind === 'video' && !liveStill(clip))
+  fileSizeNote.textContent = fileSizeCopy(
+    exportMegabytes(picture.width, picture.height, seconds, fileSize, withAudio),
+    fileSize,
+  )
   for (const button of $('[data-color]')) {
     button.setAttribute('aria-pressed', String(button.dataset.color?.toLowerCase() === background.toLowerCase()))
   }
@@ -723,9 +875,9 @@ async function save(share: boolean) {
   render()
   try {
     const { cols, rows } = currentGrid()
-    const sound = clips.find((clip): clip is VideoClip => clip.id === soundId && clip.kind === 'video') ?? null
+    const sounds = clips.filter((clip): clip is VideoClip => soundIds.has(clip.id) && clip.kind === 'video' && !liveStill(clip))
     const { exportGrid } = await import('./export')
-    const { blob, soundFailed } = await exportGrid({
+    const { blob, soundFailed, soundPartial } = await exportGrid({
       clips,
       cols,
       rows,
@@ -733,9 +885,10 @@ async function save(share: boolean) {
       background,
       frame: frameId,
       frameFit,
-      sound,
+      sounds,
       clipSeconds,
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
+      fileSize,
       onProgress: (done, total) => {
         downloadButton.textContent = `Making your video… ${done} of ${total}`
       },
@@ -743,11 +896,17 @@ async function save(share: boolean) {
     const shared = share ? await shareFile(blob) : false
     if (!shared) downloadBlob(blob, 'gif-grid.mp4')
     lastExport = 'video'
-    const picture = outputLayout(cols, rows, frameId, frameFit)
+    const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
     const saved = shared
-      ? `Shared a ${picture.width}×${picture.height} video.`
-      : `Check your Downloads folder for gif-grid.mp4 (${picture.width}×${picture.height}).`
-    setStatus(soundFailed ? `${saved} This one has no sound.` : saved)
+      ? `Shared a ${picture.width}×${picture.height} video (${formatBytes(blob.size)}).`
+      : `Check your Downloads folder for gif-grid.mp4 (${picture.width}×${picture.height}, ${formatBytes(blob.size)}).`
+    setStatus(
+      soundFailed
+        ? `${saved} This one has no sound.`
+        : soundPartial
+          ? `${saved} Some of the sound couldn’t be added.`
+          : saved,
+    )
   } catch (error) {
     setStatus(
       error instanceof Error
@@ -780,15 +939,16 @@ async function saveGif() {
       frameFit,
       clipSeconds,
       lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
+      fileSize,
       onProgress: (done, total) => {
         gifButton.textContent = `Making your GIF… ${done} of ${total}`
       },
     })
     downloadBlob(blob, 'grid.gif')
     lastExport = 'gif'
-    const picture = outputLayout(cols, rows, frameId, frameFit)
-    const saved = `Check your Downloads folder for grid.gif (${picture.gifWidth}×${picture.gifHeight}).`
-    setStatus(soundId ? `${saved} GIFs play with no sound.` : saved)
+    const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
+    const saved = `Check your Downloads folder for grid.gif (${picture.gifWidth}×${picture.gifHeight}, ${formatBytes(blob.size)}).`
+    setStatus(soundIds.size ? `${saved} GIFs play with no sound.` : saved)
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'Couldn’t make the GIF. Try again.')
   } finally {
@@ -807,6 +967,23 @@ async function shareFile(blob: Blob) {
     if (error instanceof DOMException && error.name === 'AbortError') return true
     return false
   }
+}
+
+function formatBytes(bytes: number) {
+  const mb = bytes / (1024 * 1024)
+  const rounded = mb < 10 ? Math.round(mb * 10) / 10 : Math.round(mb)
+  const text = rounded < 10 && !Number.isInteger(rounded) ? rounded.toFixed(1) : String(Math.max(rounded, 0.1))
+  return `${text} MB`
+}
+
+function fileSizeCopy(mb: number, size: FileSize) {
+  const about = formatBytes(mb * 1024 * 1024)
+  if (size === 'small') return `About ${about}. Easiest to put on a website.`
+  if (size === 'medium') return `About ${about}. A good size for a website.`
+  if (size === 'large') return `About ${about}. Sharper, and still fine for most sites.`
+  return mb >= 20
+    ? `About ${about}. Best quality. Some websites won’t take a file this big.`
+    : `About ${about}. Best quality.`
 }
 
 function downloadBlob(blob: Blob, filename: string) {

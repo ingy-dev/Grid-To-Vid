@@ -12,7 +12,7 @@
     <div class="page">
       <header class="mast">
         <h1>Grid to Vid</h1>
-        <p>Make one video out of your GIFs and clips.</p>
+        <p>Make one video out of your photos, GIFs, and clips.</p>
       </header>
 
       <section id="empty" class="empty">
@@ -20,11 +20,11 @@
           <span class="drop-icon" aria-hidden="true">
             <span></span><span></span><span></span><span></span>
           </span>
-          <span class="drop-title">Drop GIFs or videos here</span>
+          <span class="drop-title">Drop photos, GIFs, or videos here</span>
           <span class="drop-or">or</span>
-          <span class="drop-cta">Choose GIFs or videos</span>
+          <span class="drop-cta">Choose photos or videos</span>
         </button>
-        <p class="lede">They play together in a grid. Then you download a video or a GIF.</p>
+        <p class="lede">Photos, GIFs, videos, and iPhone Live Photos. Then you download one file.</p>
         <button type="button" class="text-btn" id="demo">Try a demo</button>
         <p id="empty-status" class="status" role="status"></p>
       </section>
@@ -34,7 +34,7 @@
           <div id="grid" class="grid"></div>
         </div>
         <p id="hint" class="hint" hidden>Drag to rearrange</p>
-        <p id="sound-hint" class="hint" hidden>Tap a speaker to add its sound.</p>
+        <p id="sound-hint" class="hint" hidden>Tap speakers to add their sound.</p>
         <div class="grid-size">
           <div class="stepper">
             <span>Columns</span>
@@ -69,6 +69,16 @@
             </div>
             <p class="field-note">Letterbox keeps the whole grid and adds bars. Crop fills the picture and cuts the edges.</p>
           </div>
+        </div>
+        <div class="size-field">
+          <label for="file-size">File size</label>
+          <select id="file-size">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+            <option value="actual">Actual Size</option>
+          </select>
+          <p id="file-size-note" class="field-note"></p>
         </div>
         <div class="actions">
           <button type="button" class="secondary" id="add">Add more</button>
@@ -144,7 +154,7 @@
       </section>
 
       <footer>
-        <p>Your GIFs and videos stay on this device. Refreshing the page clears the grid.</p>
+        <p>Your photos and videos stay on this device. Refreshing the page clears the grid.</p>
       </footer>
     </div>
 
@@ -158,7 +168,7 @@
       type="file"
       hidden
       multiple
-      accept="image/gif,video/mp4,video/quicktime,video/webm,.gif,.mp4,.mov,.m4v,.webm"
+      accept="image/*,video/*,.heic,.heif,.jpg,.jpeg,.png,.gif,.webp,.avif,.bmp,.tif,.tiff,.mov,.mp4,.m4v,.webm,.mkv,.qt,.3gp"
     />
     <script type="module" src="./src/main.ts"></script>
   </body>
