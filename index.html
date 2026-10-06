@@ -44,6 +44,12 @@
         </div>
         <p id="hint" class="hint" hidden>Drag to rearrange</p>
         <p id="sound-hint" class="hint" hidden>Tap speakers to add their sound.</p>
+        <div class="fit-field">
+          <div class="choices">
+            <button type="button" class="choice" data-fit="contain" aria-pressed="true">Show the whole clip</button>
+            <button type="button" class="choice" data-fit="cover" aria-pressed="false">Crop to fill</button>
+          </div>
+        </div>
         <div class="grid-size">
           <div class="stepper">
             <span>Columns</span>
@@ -119,13 +125,6 @@
               <button type="button" class="choice" data-clip="3" aria-pressed="false">3 seconds</button>
               <button type="button" class="choice" data-clip="5" aria-pressed="false">5 seconds</button>
               <button type="button" class="choice" data-clip="10" aria-pressed="true">10 seconds</button>
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend>Fit</legend>
-            <div class="choices">
-              <button type="button" class="choice" data-fit="contain" aria-pressed="true">Show the whole clip</button>
-              <button type="button" class="choice" data-fit="cover" aria-pressed="false">Fill the square</button>
             </div>
           </fieldset>
           <fieldset>

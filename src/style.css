@@ -312,6 +312,14 @@ body.is-rearranging {
 
 .hint { color: var(--muted); margin-top: 8px; }
 
+.fit-field {
+  width: min(520px, 100%);
+  margin: 16px auto 0;
+}
+
+.fit-field .choices { display: flex; align-items: stretch; }
+.fit-field .choice { flex: 1; justify-content: center; text-align: center; }
+
 .grid-size {
   display: flex;
   justify-content: center;
@@ -548,4 +556,5 @@ footer { margin-top: 36px; font-size: 15px; }
 @media (max-width: 720px) {
   .page { width: min(100% - 24px, 880px); padding-top: 24px; }
   .secondary { padding-inline: 14px; }
+  .fit-field .choices { flex-direction: column; }
 }
