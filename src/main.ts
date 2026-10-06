@@ -2,7 +2,7 @@ import type { ImportJob } from './live'
 import { exportFrameCount, exportMegabytes, FPS, frameById, gridShape, outputLayout, usedSeconds } from './layout'
 import { disposeClip } from './state'
 import { liveStill, type Clip, type FileSize, type Fit, type FrameFit, type FrameId, type ShapePref, type VideoClip } from './types'
-import { MAX_BYTES, MAX_CLIPS } from './types'
+import { MAX_BYTES, MAX_CLIPS, MAX_GRID } from './types'
 
 const empty = document.querySelector<HTMLElement>('#empty')!
 const workspace = document.querySelector<HTMLElement>('#workspace')!
@@ -20,14 +20,16 @@ const hint = document.querySelector<HTMLElement>('#hint')!
 const addButton = document.querySelector<HTMLButtonElement>('#add')!
 const downloadButton = document.querySelector<HTMLButtonElement>('#download')!
 const gifButton = document.querySelector<HTMLButtonElement>('#download-gif')!
+const pngButton = document.querySelector<HTMLButtonElement>('#download-png')!
 const downloadInstead = document.querySelector<HTMLButtonElement>('#download-instead')!
 const status = document.querySelector<HTMLElement>('#status')!
 const emptyStatus = document.querySelector<HTMLElement>('#empty-status')!
+const fileInput = document.querySelector<HTMLInputElement>('#file')!
 const adjustToggle = document.querySelector<HTMLButtonElement>('#adjust-toggle')!
 const adjust = document.querySelector<HTMLElement>('#adjust')!
-const fileInput = document.querySelector<HTMLInputElement>('#file')!
 const toast = document.querySelector<HTMLElement>('#toast')!
 const undoButton = document.querySelector<HTMLButtonElement>('#undo')!
+const shareButton = document.querySelector<HTMLButtonElement>('#share')!
 const colorInput = document.querySelector<HTMLInputElement>('#color')!
 const colsValue = document.querySelector<HTMLElement>('#cols-value')!
 const rowsValue = document.querySelector<HTMLElement>('#rows-value')!
@@ -46,7 +48,7 @@ let background = '#000000'
 const soundIds = new Set<string>()
 let exporting = false
 let reading = false
-let lastExport: 'video' | 'gif' | null = null
+let lastExport: 'video' | 'gif' | 'png' | null = null
 let gridKey = ''
 let customGrid = false
 let lockedCols = 2
@@ -68,6 +70,9 @@ let drag: {
 } | null = null
 
 const shareMode = canShareFiles()
+const SHARE_TEXT =
+  'Grid to Vid - An easy way to make a grid from your photos, GIFs and clips and share or save video, .gif or .png.'
+const LIVE_SITE = 'https://ingy-dev.github.io/Grid-To-Vid/'
 const gifViews: {
   canvas: HTMLCanvasElement
   clip: Extract<Clip, { kind: 'gif' }>
@@ -96,18 +101,26 @@ addButton.addEventListener('click', () => fileInput.click())
 demoButton.addEventListener('click', () => void runDemo())
 downloadButton.addEventListener('click', () => void save(shareMode))
 gifButton.addEventListener('click', () => void saveGif())
+pngButton.addEventListener('click', () => void savePng())
 downloadInstead.addEventListener('click', () => void save(false))
+shareButton.addEventListener('click', () => void shareSite())
 undoButton.addEventListener('click', restoreRemoved)
 fileInput.addEventListener('change', () => {
   const files = fileInput.files
   if (files?.length) void ingestFiles([...files])
   fileInput.value = ''
 })
-
-adjustToggle.addEventListener('click', () => {
-  const open = adjust.hidden
-  adjust.hidden = !open
-  adjustToggle.setAttribute('aria-expanded', String(open))
+adjustToggle.addEventListener('click', () => showAdjust(adjust.hidden))
+adjustToggle.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || adjust.hidden) return
+  event.preventDefault()
+  showAdjust(false)
+})
+adjust.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || adjust.hidden) return
+  event.preventDefault()
+  showAdjust(false)
+  adjustToggle.focus()
 })
 
 for (const button of $('[data-shape]')) {
@@ -164,7 +177,7 @@ for (const button of $('[data-frame-fit]')) {
 for (const button of $('[data-color]')) {
   button.addEventListener('click', () => {
     background = button.dataset.color || '#000000'
-    colorInput.value = background
+    if (background !== 'transparent') colorInput.value = background
     markDirty()
     render()
   })
@@ -189,12 +202,24 @@ window.addEventListener('drop', (event) => {
   event.preventDefault()
   void ingestDrop(event.dataTransfer!)
 })
+window.addEventListener('paste', (event) => {
+  if (typingTarget(event.target) || !event.clipboardData) return
+  const files = filesFromClipboard(event.clipboardData)
+  if (!files.length) return
+  event.preventDefault()
+  void ingestFiles(files)
+})
 
 window.addEventListener('beforeunload', (event) => {
   if (!clips.length && !undo) return
   event.preventDefault()
   event.returnValue = ''
 })
+
+function showAdjust(open: boolean) {
+  adjust.hidden = !open
+  adjustToggle.setAttribute('aria-expanded', String(open))
+}
 
 function setStatus(text: string) {
   status.textContent = text
@@ -227,6 +252,56 @@ async function runDemo() {
   }
 }
 
+function typingTarget(target: EventTarget | null) {
+  if (target instanceof HTMLElement && target.isContentEditable) return true
+  if (target instanceof HTMLTextAreaElement) return true
+  if (!(target instanceof HTMLInputElement)) return false
+  const type = target.type
+  return type === 'text' || type === 'search' || type === 'email' || type === 'url' || type === 'password' || type === ''
+}
+
+const PASTE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/bmp': 'bmp',
+  'image/tiff': 'tiff',
+  'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+}
+
+function pastedFile(file: File, index: number) {
+  const type = file.type.toLowerCase()
+  const ext = PASTE_EXT[type]
+  if (!ext || /\.[a-z0-9]+$/i.test(file.name)) return file
+  const base = file.name && file.name !== 'blob' ? file.name : `Pasted ${index + 1}`
+  return new File([file], `${base}.${ext}`, { type: file.type, lastModified: file.lastModified })
+}
+
+function filesFromClipboard(data: DataTransfer) {
+  const found: File[] = []
+  for (const item of data.items) {
+    if (item.kind !== 'file') continue
+    const file = item.getAsFile()
+    if (file) found.push(file)
+  }
+  if (!found.length) found.push(...data.files)
+  const seen = new Set<string>()
+  return found.flatMap((file, index) => {
+    const named = pastedFile(file, index)
+    const key = `${named.name}:${named.size}:${named.type}:${named.lastModified}`
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [named]
+  })
+}
+
 async function ingestDrop(transfer: DataTransfer) {
   const files: File[] = []
   let folder = false
@@ -251,7 +326,8 @@ async function ingestFiles(incoming: File[]) {
   reading = true
   render()
   const notes: string[] = []
-  const capacity = customGrid ? currentGrid().cols * currentGrid().rows : MAX_CLIPS
+  const slots = customGrid ? currentGrid().cols * currentGrid().rows : MAX_CLIPS
+  const capacity = Math.min(MAX_CLIPS, slots)
   const room = Math.max(0, capacity - clips.length)
   const files = incoming.filter((file) => file.size > 0 || file.type || file.name)
   try {
@@ -260,11 +336,12 @@ async function ingestFiles(incoming: File[]) {
     notes.push(...planned.notes)
     let jobs = planned.jobs
     if (jobs.length > room) {
+      const gridFull = customGrid && slots <= clips.length
       notes.push(
-        room === 0 && customGrid
+        room === 0 && gridFull && clips.length < MAX_CLIPS
           ? 'Add a row or a column to fit another clip.'
           : room === 0
-            ? 'Using the first 12. Remove one to add another.'
+            ? `Using the first ${MAX_CLIPS}. Remove one to add another.`
             : 'Using the first ones that fit.',
       )
       jobs = jobs.slice(0, room)
@@ -390,15 +467,12 @@ function playable(clip: Clip) {
 }
 
 function resizeGrid(axis: 'cols' | 'rows', delta: number) {
+  if (exporting || reading) return
   const current = currentGrid()
-  let cols = current.cols
-  let rows = current.rows
-  if (axis === 'cols') cols += delta
-  else rows += delta
-  if (cols < 1 || rows < 1 || cols > MAX_CLIPS || rows > MAX_CLIPS) return
-  if (axis === 'cols') rows = Math.max(rows, Math.ceil(clips.length / cols))
-  else cols = Math.max(cols, Math.ceil(clips.length / rows))
-  if (cols > MAX_CLIPS || rows > MAX_CLIPS || cols * rows > MAX_CLIPS) {
+  const cols = axis === 'cols' ? current.cols + delta : current.cols
+  const rows = axis === 'rows' ? current.rows + delta : current.rows
+  if (cols < 1 || rows < 1 || cols > MAX_GRID || rows > MAX_GRID) return
+  if (cols * rows < clips.length) {
     setStatus(axis === 'cols' ? 'Remove a clip to use fewer columns.' : 'Remove a clip to use fewer rows.')
     return
   }
@@ -428,7 +502,9 @@ function render() {
     gridKey = key
     paintGrid(cols, rows)
   }
-  document.documentElement.style.setProperty('--matte', background)
+  const clear = background === 'transparent'
+  document.body.classList.toggle('is-clear', clear)
+  document.documentElement.style.setProperty('--matte', clear ? 'transparent' : background)
   grid.dataset.fit = fit
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`
   sizeGrid(cols, rows)
@@ -460,13 +536,20 @@ function paintGrid(cols: number, rows: number) {
   }
 
   const holes = cols * rows - clips.length
-  if (holes > 0 && clips.length < MAX_CLIPS) {
-    const add = document.createElement('button')
-    add.type = 'button'
-    add.className = 'cell add'
-    add.textContent = 'Add'
-    add.addEventListener('click', () => fileInput.click())
-    grid.append(add)
+  for (let hole = 0; hole < holes; hole++) {
+    if (hole === 0 && clips.length < MAX_CLIPS) {
+      const add = document.createElement('button')
+      add.type = 'button'
+      add.className = 'cell add'
+      add.textContent = 'Add'
+      add.addEventListener('click', () => fileInput.click())
+      grid.append(add)
+      continue
+    }
+    const empty = document.createElement('div')
+    empty.className = 'cell hole'
+    empty.setAttribute('aria-hidden', 'true')
+    grid.append(empty)
   }
   drawGifFrame()
 }
@@ -678,9 +761,10 @@ function shiftPlaceholder(target: HTMLElement, x: number, y: number) {
   const placeholder = grid.querySelector<HTMLElement>('.placeholder')
   if (!placeholder) return
   let beforeNode: Element | null
-  if (target.classList.contains('add')) {
-    if (placeholder.nextElementSibling === target) return
-    beforeNode = target
+  if (target.classList.contains('add') || target.classList.contains('hole')) {
+    const anchor = grid.querySelector('.add, .hole')
+    if (!anchor || placeholder.nextElementSibling === anchor) return
+    beforeNode = anchor
   } else {
     const rect = target.getBoundingClientRect()
     const after = x - rect.left + (y - rect.top) > (rect.width + rect.height) / 2
@@ -803,6 +887,11 @@ function updateChoices() {
   const layout = currentGrid()
   colsValue.textContent = String(layout.cols)
   rowsValue.textContent = String(layout.rows)
+  const busy = exporting || reading
+  colsPlus.disabled = busy || layout.cols >= MAX_GRID
+  rowsPlus.disabled = busy || layout.rows >= MAX_GRID
+  colsMinus.disabled = busy || layout.cols <= 1 || (layout.cols - 1) * layout.rows < clips.length
+  rowsMinus.disabled = busy || layout.rows <= 1 || layout.cols * (layout.rows - 1) < clips.length
   for (const button of $('[data-shape]')) {
     button.setAttribute('aria-pressed', String(!customGrid && button.dataset.shape === shape))
   }
@@ -854,6 +943,7 @@ function updateButtons() {
   addButton.disabled = locked
   downloadButton.disabled = locked
   gifButton.disabled = locked
+  pngButton.disabled = locked
   downloadInstead.hidden = !shareMode || exporting
   if (exporting) return
   downloadButton.textContent = shareMode
@@ -864,6 +954,7 @@ function updateButtons() {
       ? 'Download again'
       : 'Download video'
   gifButton.textContent = lastExport === 'gif' ? 'Download GIF again' : 'Download GIF'
+  pngButton.textContent = lastExport === 'png' ? 'Download PNG again' : 'Download PNG'
 }
 
 async function save(share: boolean) {
@@ -900,12 +991,13 @@ async function save(share: boolean) {
     const saved = shared
       ? `Shared a ${picture.width}×${picture.height} video (${formatBytes(blob.size)}).`
       : `Check your Downloads folder for gif-grid.mp4 (${picture.width}×${picture.height}, ${formatBytes(blob.size)}).`
+    const clearNote = background === 'transparent' ? ' Clear areas are black in the video.' : ''
     setStatus(
       soundFailed
-        ? `${saved} This one has no sound.`
+        ? `${saved} This one has no sound.${clearNote}`
         : soundPartial
-          ? `${saved} Some of the sound couldn’t be added.`
-          : saved,
+          ? `${saved} Some of the sound couldn’t be added.${clearNote}`
+          : `${saved}${clearNote}`,
     )
   } catch (error) {
     setStatus(
@@ -948,7 +1040,8 @@ async function saveGif() {
     lastExport = 'gif'
     const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
     const saved = `Check your Downloads folder for grid.gif (${picture.gifWidth}×${picture.gifHeight}, ${formatBytes(blob.size)}).`
-    setStatus(soundIds.size ? `${saved} GIFs play with no sound.` : saved)
+    const notes = [soundIds.size ? 'GIFs play with no sound.' : ''].filter(Boolean)
+    setStatus(notes.length ? `${saved} ${notes.join(' ')}` : saved)
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'Couldn’t make the GIF. Try again.')
   } finally {
@@ -957,16 +1050,89 @@ async function saveGif() {
   }
 }
 
+async function savePng() {
+  if (exporting || reading || !clips.length) return
+  exporting = true
+  lastExport = null
+  setStatus('')
+  pngButton.textContent = 'Making your picture…'
+  render()
+  try {
+    const { cols, rows } = currentGrid()
+    const { exportPng } = await import('./export')
+    const blob = await exportPng({
+      clips,
+      cols,
+      rows,
+      fit,
+      background,
+      frame: frameId,
+      frameFit,
+      clipSeconds,
+      lengthSeconds: lengthChoice === 'auto' ? null : lengthChoice,
+      fileSize,
+    })
+    downloadBlob(blob, 'gif-grid.png')
+    lastExport = 'png'
+    const picture = outputLayout(cols, rows, frameId, frameFit, fileSize)
+    const saved = `Check your Downloads folder for gif-grid.png (${picture.width}×${picture.height}, ${formatBytes(blob.size)}).`
+    const notes = [soundIds.size ? 'Pictures have no sound.' : ''].filter(Boolean)
+    setStatus(notes.length ? `${saved} ${notes.join(' ')}` : saved)
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : 'Couldn’t make the picture. Try again.')
+  } finally {
+    exporting = false
+    render()
+  }
+}
+
+function siteAddress() {
+  const host = location.hostname
+  if (host === 'localhost' || host === '127.0.0.1') return LIVE_SITE
+  return new URL('./', location.href).href
+}
+
+function shareMessage() {
+  return `${SHARE_TEXT}\n${siteAddress()}`
+}
+
+async function shareSite() {
+  const text = shareMessage()
+  const url = siteAddress()
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Grid to Vid', text, url })
+      return
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    setStatus('Link copied.')
+  } catch {
+    setStatus('Couldn’t share from this browser.')
+  }
+}
+
 async function shareFile(blob: Blob) {
   const file = new File([blob], 'gif-grid.mp4', { type: 'video/mp4' })
   if (!navigator.canShare?.({ files: [file] })) return false
-  try {
-    await navigator.share({ files: [file], title: 'Grid to Vid' })
-    return true
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') return true
-    return false
+  const text = shareMessage()
+  const url = siteAddress()
+  const attempts: ShareData[] = [
+    { files: [file], title: 'Grid to Vid', text, url },
+    { files: [file], title: 'Grid to Vid', text },
+  ]
+  for (const data of attempts) {
+    try {
+      await navigator.share(data)
+      return true
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return true
+    }
   }
+  return false
 }
 
 function formatBytes(bytes: number) {

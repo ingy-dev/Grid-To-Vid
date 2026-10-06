@@ -11,8 +11,17 @@
   <body>
     <div class="page">
       <header class="mast">
-        <h1>Grid to Vid</h1>
-        <p>Make one video out of your photos, GIFs, and clips.</p>
+        <div class="mast-row">
+          <h1>Grid to Vid</h1>
+          <button type="button" class="share-btn" id="share" aria-label="Share">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path d="M12 15V3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M7.5 7.5 12 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M5 11.5V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <p>Make a grid from your photos, GIFs and clips and share or save video, .gif or .png.</p>
       </header>
 
       <section id="empty" class="empty">
@@ -20,7 +29,7 @@
           <span class="drop-icon" aria-hidden="true">
             <span></span><span></span><span></span><span></span>
           </span>
-          <span class="drop-title">Drop photos, GIFs, or videos here</span>
+          <span class="drop-title">Drop or paste photos, GIFs, or videos here</span>
           <span class="drop-or">or</span>
           <span class="drop-cta">Choose photos or videos</span>
         </button>
@@ -49,6 +58,7 @@
             <button type="button" id="rows-plus" aria-label="More rows">+</button>
           </div>
         </div>
+        <button type="button" class="secondary add-more" id="add">Add more</button>
         <div class="size-field">
           <label for="frame">Size</label>
           <select id="frame">
@@ -70,32 +80,11 @@
             <p class="field-note">Letterbox keeps the whole grid and adds bars. Crop fills the picture and cuts the edges.</p>
           </div>
         </div>
-        <div class="size-field">
-          <label for="file-size">File size</label>
-          <select id="file-size">
-            <option value="small">Small</option>
-            <option value="medium" selected>Medium</option>
-            <option value="large">Large</option>
-            <option value="actual">Actual Size</option>
-          </select>
-          <p id="file-size-note" class="field-note"></p>
-        </div>
-        <div class="actions">
-          <button type="button" class="secondary" id="add">Add more</button>
-          <div class="primary-wrap">
-            <button type="button" class="primary" id="download">Download video</button>
-            <button type="button" class="secondary" id="download-gif">Download GIF</button>
-            <button type="button" class="text-btn" id="download-instead" hidden>Download instead</button>
-          </div>
-        </div>
-        <p id="status" class="status" role="status"></p>
-        <p class="quiet">
-          The video is a few seconds long. Messages and Instagram will loop it. If it plays only once, turn on loop in your video app.
-        </p>
-        <button type="button" class="text-btn adjust-toggle" id="adjust-toggle" aria-expanded="false" aria-controls="adjust">
-          Adjust look
-        </button>
-        <div id="adjust" class="adjust" hidden>
+        <div class="adjust-slot">
+          <button type="button" class="secondary adjust-toggle" id="adjust-toggle" aria-expanded="false" aria-controls="adjust">
+            Adjust look
+          </button>
+          <fieldset class="adjust" id="adjust" hidden aria-labelledby="adjust-toggle">
           <fieldset>
             <legend>Shape</legend>
             <div class="choices">
@@ -144,13 +133,37 @@
             <div class="swatches">
               <button type="button" class="swatch" data-color="#000000" aria-label="Black" aria-pressed="true"></button>
               <button type="button" class="swatch" data-color="#ffffff" aria-label="White" aria-pressed="false"></button>
+              <button type="button" class="swatch" data-color="transparent" aria-label="Clear" aria-pressed="false"></button>
               <label class="more-color">
                 More colors
                 <input id="color" type="color" value="#000000" />
               </label>
             </div>
           </fieldset>
+          </fieldset>
         </div>
+        <div class="size-field">
+          <label for="file-size">File size</label>
+          <select id="file-size">
+            <option value="small">Small</option>
+            <option value="medium" selected>Medium</option>
+            <option value="large">Large</option>
+            <option value="actual">Actual Size</option>
+          </select>
+          <p id="file-size-note" class="field-note"></p>
+        </div>
+        <div class="actions">
+          <div class="primary-wrap">
+            <button type="button" class="primary" id="download">Download video</button>
+            <button type="button" class="secondary" id="download-gif">Download GIF</button>
+            <button type="button" class="secondary" id="download-png">Download PNG</button>
+            <button type="button" class="text-btn" id="download-instead" hidden>Download instead</button>
+          </div>
+        </div>
+        <p id="status" class="status" role="status"></p>
+        <p class="quiet">
+          The video is a few seconds long. Messages and Instagram will loop it. If it plays only once, turn on loop in your video app.
+        </p>
       </section>
 
       <footer>

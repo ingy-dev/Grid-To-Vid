@@ -37,5 +37,6 @@ export function liveStill(clip: Clip): clip is VideoClip & { still: ImageBitmap 
 export type Clip = GifClip | VideoClip
 
 export const MAX_CLIPS = 12
+export const MAX_GRID = 16
 export const MAX_BYTES = 40 * 1024 * 1024
 export const MAX_CLIP_SECONDS = 10

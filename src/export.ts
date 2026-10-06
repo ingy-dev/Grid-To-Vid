@@ -20,6 +20,7 @@ import { liveStill, type Clip, type FileSize, type Fit, type FrameFit, type Fram
 
 const ENCODE_ERROR = 'Couldn’t make the video in this browser. Open this page in Chrome and try again.'
 const GIF_ERROR = 'Couldn’t make the GIF. Try again.'
+const PNG_ERROR = 'Couldn’t make the picture. Try again.'
 
 class VideoSampler {
   private current: VideoSample | null = null
@@ -209,7 +210,7 @@ export async function exportGrid(options: {
       clips,
       cols,
       fit,
-      background,
+      background: background === 'transparent' ? '#000000' : background,
       cell,
       width,
       height,
@@ -275,6 +276,7 @@ export async function exportGif(options: {
   onProgress: (done: number, total: number) => void
 }): Promise<Blob> {
   const { clips, cols, rows, fit, background, frame, frameFit, clipSeconds, lengthSeconds, fileSize, onProgress } = options
+  const clear = background === 'transparent'
   const layout = outputLayout(cols, rows, frame, frameFit, fileSize)
   const colors = layout.gifColors
   const cell = layout.gifCell
@@ -291,7 +293,9 @@ export async function exportGif(options: {
       clips,
       cols,
       fit,
-      background,
+      background: clear ? '#000000' : background,
+      clear,
+      opaque: !clear,
       cell,
       width,
       height,
@@ -305,9 +309,16 @@ export async function exportGif(options: {
     async (ctx, index) => {
       if (index % stride !== 0) return
       const rgba = new Uint8Array(ctx.getImageData(0, 0, width, height).data)
-      const palette = quantize(rgba, colors)
-      const indexed = applyPalette(rgba, palette)
-      gif.writeFrame(indexed, width, height, { palette, delay, repeat: 0 })
+      const frame = indexGif(rgba, colors, clear)
+      gif.writeFrame(
+        frame.indexed,
+        width,
+        height,
+        Object.assign(
+          { palette: frame.palette, delay, repeat: 0 },
+          frame.transparent ? { transparent: true, transparentIndex: frame.transparentIndex } : {},
+        ),
+      )
     },
   )
 
@@ -318,12 +329,84 @@ export async function exportGif(options: {
   return new Blob([copy], { type: 'image/gif' })
 }
 
+export async function exportPng(options: {
+  clips: Clip[]
+  cols: number
+  rows: number
+  fit: Fit
+  background: string
+  frame: FrameId
+  frameFit: FrameFit
+  clipSeconds: number
+  lengthSeconds: number | null
+  fileSize: FileSize
+}): Promise<Blob> {
+  const { clips, cols, rows, fit, background, frame, frameFit, clipSeconds, lengthSeconds, fileSize } = options
+  const clear = background === 'transparent'
+  const layout = outputLayout(cols, rows, frame, frameFit, fileSize)
+  let blob: Blob | null = null
+  await paintFrames(
+    {
+      clips,
+      cols,
+      fit,
+      background: clear ? '#000000' : background,
+      clear,
+      opaque: false,
+      still: true,
+      cell: layout.cell,
+      width: layout.width,
+      height: layout.height,
+      offsetX: layout.offsetX,
+      offsetY: layout.offsetY,
+      clipSeconds,
+      lengthSeconds,
+      failure: PNG_ERROR,
+      onProgress: () => {},
+    },
+    async (ctx) => {
+      blob = await new Promise((resolve, reject) => {
+        ctx.canvas.toBlob((file) => (file ? resolve(file) : reject(new Error(PNG_ERROR))), 'image/png')
+      })
+    },
+  )
+  if (!blob) throw new Error(PNG_ERROR)
+  return blob
+}
+
+function indexGif(rgba: Uint8Array, colors: number, clear: boolean) {
+  if (!clear) {
+    const palette = quantize(rgba, colors)
+    return { palette, indexed: applyPalette(rgba, palette), transparent: false, transparentIndex: 0 }
+  }
+  const opaque = new Uint8Array(rgba.length)
+  let bytes = 0
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3] < 128) continue
+    opaque[bytes++] = rgba[i]
+    opaque[bytes++] = rgba[i + 1]
+    opaque[bytes++] = rgba[i + 2]
+    opaque[bytes++] = 255
+  }
+  const palette = bytes >= 4 ? [...quantize(opaque.subarray(0, bytes), Math.max(1, colors - 1))] : [[255, 0, 255]]
+  const transparentIndex = palette.length
+  palette.push([255, 0, 255])
+  const indexed = bytes >= 4 ? applyPalette(rgba, palette) : new Uint8Array(rgba.length / 4)
+  for (let pixel = 0, i = 0; pixel < indexed.length; pixel++, i += 4) {
+    if (rgba[i + 3] < 128) indexed[pixel] = transparentIndex
+  }
+  return { palette, indexed, transparent: true, transparentIndex }
+}
+
 async function paintFrames(
   options: {
     clips: Clip[]
     cols: number
     fit: Fit
     background: string
+    clear?: boolean
+    opaque?: boolean
+    still?: boolean
     cell: number
     width: number
     height: number
@@ -338,10 +421,14 @@ async function paintFrames(
 ) {
   const { clips, cols, fit, background, cell, width, height, offsetX, offsetY, clipSeconds, lengthSeconds, failure, onProgress } =
     options
-  const frameCount = exportFrameCount(
-    clips.map((clip) => usedSeconds(clip.duration, clipSeconds)),
-    lengthSeconds,
-  )
+  const clear = options.clear === true
+  const opaque = options.opaque !== false
+  const frameCount = options.still
+    ? 1
+    : exportFrameCount(
+        clips.map((clip) => usedSeconds(clip.duration, clipSeconds)),
+        lengthSeconds,
+      )
   const opened: { clip: VideoClip; input: Input; sampler: VideoSampler; frames: number }[] = []
   try {
     for (const clip of clips) {
@@ -368,7 +455,7 @@ async function paintFrames(
     const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
-    const ctx = canvas.getContext('2d', { alpha: false })
+    const ctx = canvas.getContext('2d', { alpha: !opaque })
     if (!ctx) throw new Error(failure)
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
@@ -379,8 +466,11 @@ async function paintFrames(
     }
 
     for (let i = 0; i < frameCount; i++) {
-      ctx.fillStyle = background
-      ctx.fillRect(0, 0, width, height)
+      if (clear && !opaque) ctx.clearRect(0, 0, width, height)
+      else {
+        ctx.fillStyle = background
+        ctx.fillRect(0, 0, width, height)
+      }
       for (let index = 0; index < clips.length; index++) {
         const clip = clips[index]
         const x = offsetX + (index % cols) * cell
